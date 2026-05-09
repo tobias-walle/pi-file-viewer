@@ -1,0 +1,32 @@
+{
+  "name": "pi-file-viewer",
+  "version": "0.1.0",
+  "description": "Pi extension for reviewing write and edit tool calls in an interactive file viewer.",
+  "type": "module",
+  "private": false,
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "file-viewer",
+    "review"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/file-viewer/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "0.62.0",
+    "@mariozechner/pi-tui": "0.62.0",
+    "@types/node": "^25.2.3",
+    "typescript": "^5.9.3"
+  }
+}
