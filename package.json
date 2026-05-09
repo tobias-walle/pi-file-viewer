@@ -11,6 +11,11 @@
     "review"
   ],
   "license": "MIT",
+  "files": [
+    "extension",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",

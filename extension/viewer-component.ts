@@ -335,7 +335,10 @@ export class FileViewerComponent implements Focusable {
 
   private renderFooter(width: number): string[] {
     if (this.mode === "comment") {
-      const prompt = this.theme.fg("warning", `Comment Line ${this.selectedLine}`)
+      const prompt = this.theme.fg(
+        "warning",
+        `Comment Line ${this.selectedLine}`,
+      )
       return [
         truncateToWidth(prompt, width, ""),
         ...this.commentInput.render(width),
