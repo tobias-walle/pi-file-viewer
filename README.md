@@ -4,6 +4,10 @@ Interactive file review extension for [pi](https://github.com/mariozechner/pi-co
 
 It tracks recent `write` and `edit` tool calls and opens them in a reusable TUI file viewer. You can navigate changes, search, add line comments, and paste those comments back into the prompt editor.
 
+## Demo
+
+https://github.com/user-attachments/assets/REPLACE_WITH_DEMO_VIDEO_URL
+
 ## Features
 
 - Tracks `write` and `edit` tool calls from the current session
