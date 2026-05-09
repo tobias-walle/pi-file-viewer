@@ -6,7 +6,7 @@ It tracks recent `write` and `edit` tool calls and opens them in a reusable TUI 
 
 ## Demo
 
-https://github.com/user-attachments/assets/a1e0277a-00d9-4879-873d-690cc915780c
+https://github.com/user-attachments/assets/f4f06bfd-4d6d-4dd4-b758-265c5630076b
 
 ## Features
 
