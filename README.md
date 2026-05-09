@@ -1,25 +1,53 @@
 # pi-file-viewer
 
-Interactive file review extension for [pi](https://github.com/mariozechner/pi-coding-agent).
+Interactive file view and review extension for [pi](https://pi.dev).
 
-It tracks recent `write` and `edit` tool calls and opens them in a reusable TUI file viewer. You can navigate changes, search, add line comments, and paste those comments back into the prompt editor.
-
-## Demo
+Open files the agent touched, inspect the diff, leave line comments, and send the review straight back into your prompt.
 
 https://github.com/user-attachments/assets/f4f06bfd-4d6d-4dd4-b758-265c5630076b
 
 ## Features
 
-- Tracks `write` and `edit` tool calls from the current session
-- Opens a searchable file viewer with line numbers and syntax highlighting
-- Marks added, changed, and removed lines when diff information is available
-- Supports comments on individual lines
-- Can browse all files in the current project from the same picker
+- Quickly inspect files the agent changed without leaving pi.
+- Jump between recent edits, search inside files, and understand what changed at a glance.
+- Leave line-by-line review notes and send them back to the agent as actionable feedback.
+
+## Installation
+
+Install from GitHub with pi:
+
+```bash
+pi install git:github.com/tobias-walle/pi-file-viewer
+```
+
+Pin a branch, tag, or commit if needed:
+
+```bash
+pi install git:github.com/tobias-walle/pi-file-viewer@v0.1.0
+```
+
+SSH works too:
+
+```bash
+pi install git:git@github.com:tobias-walle/pi-file-viewer
+```
+
+Restart pi or run `/reload` after installing.
+
+You can also clone the repository and copy the extension into pi's auto-loaded extension folder:
+
+```bash
+git clone https://github.com/tobias-walle/pi-file-viewer.git
+mkdir -p ~/.pi/agent/extensions
+cp -R pi-file-viewer/extension ~/.pi/agent/extensions/file-viewer
+```
+
+Then restart pi or run `/reload`.
 
 ## Usage
 
-- Run `/view-file` to select a file to view
-- Press `Alt+W` to open the same picker from the keyboard
+- Run `/view-file` to select a file to view.
+- Press `Alt+W` to open the same picker from the keyboard.
 
 Viewer keys:
 
@@ -35,40 +63,6 @@ Viewer keys:
 
 When you close the viewer, collected comments are pasted into the prompt editor.
 
-## Install with pi from git
-
-Install from the GitHub repository:
-
-```bash
-pi install git:github.com/tobias-walle/pi-file-viewer
-```
-
-To pin a branch, tag, or commit:
-
-```bash
-pi install git:github.com/tobias-walle/pi-file-viewer@v0.1.0
-```
-
-SSH works too:
-
-```bash
-pi install git:git@github.com:tobias-walle/pi-file-viewer
-```
-
-Restart pi or run `/reload` after installing.
-
-## Copy into the extension folder
-
-You can also clone the repository and copy the extension directly into pi's auto-loaded extension folder:
-
-```bash
-git clone https://github.com/tobias-walle/pi-file-viewer.git
-mkdir -p ~/.pi/agent/extensions
-cp -R pi-file-viewer/extension ~/.pi/agent/extensions/file-viewer
-```
-
-Then restart pi or run `/reload`.
-
 ## Development
 
 Install dependencies and run all checks with Bun:
@@ -78,9 +72,7 @@ bun install
 bun run check
 ```
 
-The check command runs Biome, TypeScript, and the smoke tests. Biome enforces formatting, import sorting, and recommended lint rules. The smoke tests verify the pi package manifest points at a loadable extension entrypoint.
-
-You can also run the smoke tests directly:
+Run the smoke tests directly:
 
 ```bash
 bun test
@@ -95,5 +87,5 @@ bun run dev
 This runs:
 
 ```bash
-pi -e .
+pi --no-extensions -e .
 ```
