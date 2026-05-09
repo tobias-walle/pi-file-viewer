@@ -14,7 +14,7 @@ It tracks recent `write` and `edit` tool calls and opens them in a reusable TUI 
 
 ## Usage
 
-- Run `/review-file` to select a file to review
+- Run `/view-file` to select a file to view
 - Press `Alt+W` to open the same picker from the keyboard
 
 Viewer keys:
@@ -33,51 +33,63 @@ When you close the viewer, collected comments are pasted into the prompt editor.
 
 ## Install with pi from git
 
-Push this repository to a git host, then install it with pi:
+Install from the GitHub repository:
 
 ```bash
-pi install git:github.com/<user>/pi-file-viewer
+pi install git:github.com/tobias-walle/pi-file-viewer
 ```
 
 To pin a branch, tag, or commit:
 
 ```bash
-pi install git:github.com/<user>/pi-file-viewer@v0.1.0
+pi install git:github.com/tobias-walle/pi-file-viewer@v0.1.0
 ```
 
 SSH works too:
 
 ```bash
-pi install git:git@github.com:<user>/pi-file-viewer
+pi install git:git@github.com:tobias-walle/pi-file-viewer
 ```
 
 Restart pi or run `/reload` after installing.
 
 ## Copy into the extension folder
 
-You can also copy the extension directly into pi's auto-loaded extension folder:
+You can also clone the repository and copy the extension directly into pi's auto-loaded extension folder:
 
 ```bash
+git clone https://github.com/tobias-walle/pi-file-viewer.git
 mkdir -p ~/.pi/agent/extensions
-cp -R extensions/file-viewer ~/.pi/agent/extensions/file-viewer
-cp -R extensions/shared ~/.pi/agent/extensions/shared
+cp -R pi-file-viewer/extension ~/.pi/agent/extensions/file-viewer
 ```
 
 Then restart pi or run `/reload`.
 
-If you already have a `shared` extension helper folder, copy only the missing files or merge the folders manually.
-
 ## Development
 
-Install dependencies and typecheck with Bun:
+Install dependencies and run all checks with Bun:
 
 ```bash
 bun install
-bun run typecheck
+bun run check
 ```
 
-Test without installing:
+The check command runs Biome, TypeScript, and the smoke tests. Biome enforces formatting, import sorting, and recommended lint rules. The smoke tests verify the pi package manifest points at a loadable extension entrypoint.
+
+You can also run the smoke tests directly:
 
 ```bash
-pi -e /Users/tobias.walle/Projects/pi-file-viewer
+bun test
+```
+
+Test interactively without installing:
+
+```bash
+bun run dev
+```
+
+This runs:
+
+```bash
+pi -e .
 ```

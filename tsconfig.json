@@ -8,7 +8,7 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "lib": ["ESNext"],
-    "types": ["node"]
+    "types": ["node", "bun"]
   },
-  "include": ["extensions/**/*.ts"]
+  "include": ["extension/**/*.ts", "tests/**/*.ts"]
 }
