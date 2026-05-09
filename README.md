@@ -4,7 +4,7 @@ Interactive file view and review extension for [pi](https://pi.dev).
 
 Open files the agent touched, inspect the diff, leave line comments, and send the review straight back into your prompt.
 
-https://github.com/user-attachments/assets/f4f06bfd-4d6d-4dd4-b758-265c5630076b
+<video src="https://github.com/user-attachments/assets/f4f06bfd-4d6d-4dd4-b758-265c5630076b" width="720" controls></video>
 
 ## Features
 
