@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { readFile } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 import type {
   EditToolDetails,
   ExtensionAPI,
@@ -20,37 +20,48 @@ import {
   type NormalizedEditInput,
 } from "./diff.js"
 import { resolvePath } from "./path.js"
-import { addReviewFile, clearReviewFiles, getReviewFiles } from "./registry.js"
+import {
+  addReviewFile,
+  clearReviewFiles,
+  getReviewFiles,
+  setReviewScope,
+} from "./registry.js"
 import type { ReviewFile, ReviewFileStatus } from "./types.js"
 import { openFileViewer } from "./viewer.js"
 
+const MAX_VIEW_FILE_BYTES = 5 * 1024 * 1024
+
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
+    activateReviewScope(ctx)
     await rebuildReviewFiles(ctx)
   })
 
   pi.on("session_tree", async (_event, ctx) => {
+    activateReviewScope(ctx)
     await rebuildReviewFiles(ctx)
   })
 
   pi.on("message_update", async (event, ctx) => {
+    activateReviewScope(ctx)
     const message = getAssistantEventMessage(event.assistantMessageEvent)
     if (!message) return
     await addReviewFilesFromAssistantMessage(
       message,
-      ctx.cwd,
+      getCurrentCwd(ctx),
       Date.now(),
       "streaming",
     )
   })
 
   pi.on("tool_call", async (event, ctx) => {
+    activateReviewScope(ctx)
     await addReviewFileFromToolInput({
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       input: event.input,
       details: undefined,
-      cwd: ctx.cwd,
+      cwd: getCurrentCwd(ctx),
       createdAt: Date.now(),
       status: "streaming",
     })
@@ -59,12 +70,13 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_result", async (event, ctx) => {
     if (event.isError) return
 
+    activateReviewScope(ctx)
     await addReviewFileFromToolInput({
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       input: event.input,
       details: event.details,
-      cwd: ctx.cwd,
+      cwd: getCurrentCwd(ctx),
       createdAt: Date.now(),
       status: "complete",
     })
@@ -86,9 +98,10 @@ export default function (pi: ExtensionAPI) {
 }
 
 async function reviewFile(ctx: ExtensionContext): Promise<void> {
+  activateReviewScope(ctx)
   await rebuildReviewFiles(ctx)
   const files = getReviewFiles()
-  const cwd = ctx.sessionManager.getCwd() || ctx.cwd
+  const cwd = getCurrentCwd(ctx)
   const file = await selectReviewFile(ctx, files, cwd)
   if (!file) return
   await openFileViewer(ctx, file)
@@ -214,8 +227,9 @@ function buildEditPreview(input: NormalizedEditInput): string {
 }
 
 async function rebuildReviewFiles(ctx: ExtensionContext): Promise<void> {
+  activateReviewScope(ctx)
   const liveFiles = getReviewFiles()
-  const cwd = ctx.sessionManager.getCwd() || ctx.cwd
+  const cwd = getCurrentCwd(ctx)
   clearReviewFiles()
 
   const toolCalls = new Map<string, ToolCallRecord>()
@@ -323,7 +337,7 @@ async function readCurrentFile(
   cwd: string,
 ): Promise<string | undefined> {
   try {
-    return await readFile(resolvePath(path, cwd), "utf8")
+    return await readFileWithLimit(resolvePath(path, cwd))
   } catch {
     return undefined
   }
@@ -388,6 +402,47 @@ function getEntryTimestamp(entry: unknown): number {
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null) return undefined
   return value as Record<string, unknown>
+}
+
+function activateReviewScope(ctx: ExtensionContext): void {
+  setReviewScope(getReviewScope(ctx))
+}
+
+function getReviewScope(ctx: ExtensionContext): string {
+  return `${ctx.sessionManager.getSessionId()}:${getCurrentCwd(ctx)}`
+}
+
+function getCurrentCwd(ctx: ExtensionContext): string {
+  return ctx.sessionManager.getCwd() || ctx.cwd
+}
+
+async function readFileWithLimit(path: string): Promise<string> {
+  const fileStat = await stat(path)
+  if (fileStat.size > MAX_VIEW_FILE_BYTES) {
+    throw new FileTooLargeError(fileStat.size)
+  }
+  return await readFile(path, "utf8")
+}
+
+class FileTooLargeError extends Error {
+  constructor(readonly size: number) {
+    super("File is too large to open")
+  }
+}
+
+function formatBytes(bytes: number): string {
+  const units = ["B", "KiB", "MiB", "GiB"]
+  let value = bytes
+  let unitIndex = 0
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex++
+  }
+
+  const formatted =
+    value >= 10 || unitIndex === 0 ? Math.round(value) : value.toFixed(1)
+  return `${formatted} ${units[unitIndex]}`
 }
 
 async function selectReviewFile(
@@ -721,9 +776,8 @@ class ReviewFileSelectComponent {
     }
 
     try {
-      const content = await readFile(
+      const content = await readFileWithLimit(
         resolvePath(item.path, this.options.cwd),
-        "utf8",
       )
       this.options.done({
         id: `file:${item.path}`,
@@ -733,8 +787,11 @@ class ReviewFileSelectComponent {
         status: "complete",
         createdAt: Date.now(),
       })
-    } catch {
-      this.openError = "Failed to open file"
+    } catch (error) {
+      this.openError =
+        error instanceof FileTooLargeError
+          ? `File is too large to open (${formatBytes(error.size)} > ${formatBytes(MAX_VIEW_FILE_BYTES)})`
+          : "Failed to open file"
       this.options.onRequestRender()
     }
   }
