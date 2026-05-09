@@ -20,21 +20,9 @@ Install from GitHub with pi:
 pi install git:github.com/tobias-walle/pi-file-viewer
 ```
 
-Pin a branch, tag, or commit if needed:
-
-```bash
-pi install git:github.com/tobias-walle/pi-file-viewer@v0.1.0
-```
-
-SSH works too:
-
-```bash
-pi install git:git@github.com:tobias-walle/pi-file-viewer
-```
-
 Restart pi or run `/reload` after installing.
 
-You can also clone the repository and copy the extension into pi's auto-loaded extension folder:
+You can also just clone the extension and modify it:
 
 ```bash
 git clone https://github.com/tobias-walle/pi-file-viewer.git
@@ -42,7 +30,6 @@ mkdir -p ~/.pi/agent/extensions
 cp -R pi-file-viewer/extension ~/.pi/agent/extensions/file-viewer
 ```
 
-Then restart pi or run `/reload`.
 
 ## Usage
 
