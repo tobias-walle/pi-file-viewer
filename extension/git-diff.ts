@@ -170,56 +170,88 @@ export function applyNumstat(files: GitChangedFile[], output: string): void {
   }
 }
 
+interface UnifiedDiffState {
+  rows: DiffRow[]
+  oldLine: number
+  newLine: number
+  inHunk: boolean
+}
+
 export function parseUnifiedDiff(diff: string): DiffRow[] {
-  const rows: DiffRow[] = []
-  let oldLine = 0
-  let newLine = 0
-  let inHunk = false
-
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("@@")) {
-      const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/.exec(line)
-      oldLine = match ? Number(match[1]) : oldLine
-      newLine = match ? Number(match[2]) : newLine
-      inHunk = true
-      rows.push({ kind: "hunk", text: line })
-      continue
-    }
-    if (!inHunk) continue
-    if (line.startsWith("\\ No newline")) continue
-
-    if (line.startsWith("+")) {
-      rows.push({
-        kind: "added",
-        text: line.slice(1),
-        newLine,
-        commentKey: `${newLine}:new`,
-      })
-      newLine++
-    } else if (line.startsWith("-")) {
-      rows.push({
-        kind: "removed",
-        text: line.slice(1),
-        oldLine,
-        removed: true,
-        commentKey: `${oldLine}:old`,
-      })
-      oldLine++
-    } else {
-      const text = line.startsWith(" ") ? line.slice(1) : line
-      rows.push({
-        kind: "context",
-        text,
-        oldLine,
-        newLine,
-        commentKey: `${newLine}:new`,
-      })
-      oldLine++
-      newLine++
-    }
+  const state: UnifiedDiffState = {
+    rows: [],
+    oldLine: 0,
+    newLine: 0,
+    inHunk: false,
   }
 
-  return rows
+  for (const line of diff.split("\n")) {
+    parseUnifiedDiffLine(state, line)
+  }
+
+  return state.rows
+}
+
+function parseUnifiedDiffLine(state: UnifiedDiffState, line: string): void {
+  const hunk = parseHunkHeader(line)
+  if (hunk) {
+    state.oldLine = hunk.oldLine
+    state.newLine = hunk.newLine
+    state.inHunk = true
+    state.rows.push({ kind: "hunk", text: line })
+    return
+  }
+
+  if (!state.inHunk || line.startsWith("\\ No newline")) return
+  appendUnifiedDiffRow(state, line)
+}
+
+function parseHunkHeader(
+  line: string,
+): { oldLine: number; newLine: number } | undefined {
+  if (!line.startsWith("@@")) return undefined
+  const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/.exec(line)
+  if (!match) return undefined
+  return { oldLine: Number(match[1]), newLine: Number(match[2]) }
+}
+
+function appendUnifiedDiffRow(state: UnifiedDiffState, line: string): void {
+  if (line.startsWith("+")) appendAddedRow(state, line)
+  else if (line.startsWith("-")) appendRemovedRow(state, line)
+  else appendContextRow(state, line)
+}
+
+function appendAddedRow(state: UnifiedDiffState, line: string): void {
+  state.rows.push({
+    kind: "added",
+    text: line.slice(1),
+    newLine: state.newLine,
+    commentKey: `${state.newLine}:new`,
+  })
+  state.newLine++
+}
+
+function appendRemovedRow(state: UnifiedDiffState, line: string): void {
+  state.rows.push({
+    kind: "removed",
+    text: line.slice(1),
+    oldLine: state.oldLine,
+    removed: true,
+    commentKey: `${state.oldLine}:old`,
+  })
+  state.oldLine++
+}
+
+function appendContextRow(state: UnifiedDiffState, line: string): void {
+  state.rows.push({
+    kind: "context",
+    text: line.startsWith(" ") ? line.slice(1) : line,
+    oldLine: state.oldLine,
+    newLine: state.newLine,
+    commentKey: `${state.newLine}:new`,
+  })
+  state.oldLine++
+  state.newLine++
 }
 
 async function buildUntrackedOverview(

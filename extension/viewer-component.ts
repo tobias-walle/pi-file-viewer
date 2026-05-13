@@ -1,12 +1,12 @@
 import type { Theme } from "@mariozechner/pi-coding-agent"
 import {
   type Focusable,
-  Input,
   matchesKey,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui"
+import { CommentStore } from "./comment-store.js"
 import { decorateSearchMatches } from "./search.js"
 import type {
   FileViewerResult,
@@ -32,6 +32,7 @@ import {
   isUp,
 } from "./ui/keys.js"
 import { LineBuffer } from "./ui/line-buffer.js"
+import { TextPrompt } from "./ui/text-prompt.js"
 import { highlightForPath } from "./utils/markdown-highlight.js"
 
 type Mode = "view" | "comment" | "search"
@@ -50,14 +51,20 @@ export class FileViewerComponent implements Focusable {
   private visibleHeight: number
   private onClose: (result: FileViewerResult) => void
   private onRequestRender: () => void
-  private comments = new Map<number, string>()
+  private comments = new CommentStore<number>()
   private buffer = new LineBuffer<string>()
   private cachedWidth?: number
   private cachedBodyHeight?: number
   private cachedLines?: string[]
   private mode: Mode = "view"
-  private commentInput = new Input()
-  private searchInput = new Input()
+  private commentPrompt = new TextPrompt({
+    onSubmit: (value) => this.saveCommentValue(value),
+    onCancel: () => this.cancelCommentInput(),
+  })
+  private searchPrompt = new TextPrompt({
+    onSubmit: (value) => this.saveSearchValue(value),
+    onCancel: () => this.cancelSearchInput(),
+  })
   private searchQuery = ""
   private _focused = false
 
@@ -67,8 +74,8 @@ export class FileViewerComponent implements Focusable {
 
   set focused(value: boolean) {
     this._focused = value
-    this.commentInput.focused = value && this.mode === "comment"
-    this.searchInput.focused = value && this.mode === "search"
+    this.commentPrompt.focused = value && this.mode === "comment"
+    this.searchPrompt.focused = value && this.mode === "search"
   }
 
   constructor(options: FileViewerComponentOptions) {
@@ -78,10 +85,6 @@ export class FileViewerComponent implements Focusable {
     this.onClose = options.onClose
     this.onRequestRender = options.onRequestRender
     this.buffer.setLines(this.buildBufferLines())
-    this.commentInput.onSubmit = (value) => this.saveCommentValue(value)
-    this.commentInput.onEscape = () => this.cancelCommentInput()
-    this.searchInput.onSubmit = (value) => this.saveSearchValue(value)
-    this.searchInput.onEscape = () => this.cancelSearchInput()
   }
 
   handleInput(data: string): void {
@@ -91,13 +94,13 @@ export class FileViewerComponent implements Focusable {
     }
 
     if (this.mode === "comment") {
-      this.commentInput.handleInput(data)
+      this.commentPrompt.handleInput(data)
       this.invalidateAndRender()
       return
     }
 
     if (this.mode === "search") {
-      this.searchInput.handleInput(data)
+      this.searchPrompt.handleInput(data)
       this.invalidateAndRender()
       return
     }
@@ -295,7 +298,7 @@ export class FileViewerComponent implements Focusable {
       )
       return [
         truncateToWidth(prompt, width, ""),
-        ...this.commentInput.render(width),
+        ...this.commentPrompt.render(width),
         this.theme.fg("dim", "enter save · esc cancel"),
       ]
     }
@@ -303,7 +306,7 @@ export class FileViewerComponent implements Focusable {
     if (this.mode === "search") {
       return [
         this.theme.fg("warning", "Search"),
-        ...this.searchInput.render(width),
+        ...this.searchPrompt.render(width),
         this.theme.fg("dim", "enter search · esc clear"),
       ]
     }
@@ -326,15 +329,16 @@ export class FileViewerComponent implements Focusable {
 
   private startCommentInput(): void {
     this.mode = "comment"
-    this.commentInput.setValue(this.comments.get(this.selectedLine) ?? "")
-    this.commentInput.focused = this.focused
+    this.commentPrompt.start(
+      this.comments.get(this.selectedLine) ?? "",
+      this.focused,
+    )
     this.invalidateAndRender()
   }
 
   private startSearchInput(): void {
     this.mode = "search"
-    this.searchInput.setValue(this.searchQuery)
-    this.searchInput.focused = this.focused
+    this.searchPrompt.start(this.searchQuery, this.focused)
     this.invalidateAndRender()
   }
 
@@ -343,7 +347,7 @@ export class FileViewerComponent implements Focusable {
     this.searchQuery = trimmed
     this.buffer.setSearch(trimmed)
     this.mode = "view"
-    this.searchInput.focused = false
+    this.searchPrompt.stop()
     if (trimmed) {
       this.moveToSearchMatch(1, true)
     }
@@ -358,29 +362,20 @@ export class FileViewerComponent implements Focusable {
   private clearSearch(): void {
     this.searchQuery = ""
     this.buffer.clearSearch()
-    this.searchInput.setValue("")
-    this.searchInput.focused = false
+    this.searchPrompt.stop({ clear: true })
     this.invalidateAndRender()
   }
 
   private saveCommentValue(value: string): void {
-    const trimmed = value.trim()
-    if (trimmed.length === 0) {
-      this.comments.delete(this.selectedLine)
-    } else {
-      this.comments.set(this.selectedLine, trimmed)
-    }
-
+    this.comments.save(this.selectedLine, value)
     this.mode = "view"
-    this.commentInput.setValue("")
-    this.commentInput.focused = false
+    this.commentPrompt.stop({ clear: true })
     this.invalidateAndRender()
   }
 
   private cancelCommentInput(): void {
     this.mode = "view"
-    this.commentInput.setValue("")
-    this.commentInput.focused = false
+    this.commentPrompt.stop({ clear: true })
     this.invalidateAndRender()
   }
 
@@ -400,7 +395,7 @@ export class FileViewerComponent implements Focusable {
   }
 
   private getComments(): ReviewComment[] {
-    return [...this.comments.entries()].map(([line, text]) => ({ line, text }))
+    return this.comments.entries().map(([line, text]) => ({ line, text }))
   }
 
   private moveBy(amount: number): void {

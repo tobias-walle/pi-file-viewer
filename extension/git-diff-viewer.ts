@@ -1,11 +1,11 @@
 import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent"
 import {
-  Input,
   matchesKey,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui"
+import { CommentStore } from "./comment-store.js"
 import {
   discoverGitRepository,
   loadGitChangedFiles,
@@ -13,6 +13,13 @@ import {
   loadGitFileRows,
 } from "./git-diff.js"
 import { formatGitDiffComments } from "./git-diff-comments.js"
+import {
+  buildGitDiffComments,
+  diffRowLineNumbers,
+  diffRowMarkerKind,
+  resolveOverviewAction,
+  resolveViewerAction,
+} from "./git-diff-viewer-logic.js"
 import { decorateSearchMatches, stripAnsi } from "./search.js"
 import type {
   DiffRow,
@@ -30,6 +37,7 @@ import {
   shortenLeft,
 } from "./ui/frame.js"
 import { LineBuffer } from "./ui/line-buffer.js"
+import { TextPrompt } from "./ui/text-prompt.js"
 import { highlightForPath } from "./utils/markdown-highlight.js"
 
 const OVERLAY_OPTIONS = {
@@ -110,9 +118,18 @@ class GitDiffViewerComponent {
   private overviewBuffer = new LineBuffer<GitChangedFile>()
   private viewerBuffer = new LineBuffer<DiffRow>()
   private viewMode: ViewMode = "diff"
-  private filterInput = new Input()
-  private searchInput = new Input()
-  private commentInput = new Input()
+  private filterPrompt = new TextPrompt({
+    onSubmit: (value) => this.applyFilter(value),
+    onCancel: () => this.cancelFilter(),
+  })
+  private searchPrompt = new TextPrompt({
+    onSubmit: (value) => this.applySearch(value),
+    onCancel: () => this.cancelSearch(),
+  })
+  private commentPrompt = new TextPrompt({
+    onSubmit: (value) => this.saveComment(value),
+    onCancel: () => this.cancelComment(),
+  })
   private cache = new Map<string, LoadState>()
   private viewerPositions = new Map<string, { line: number; scroll: number }>()
   private pendingViewerLines = new Map<string, number>()
@@ -120,17 +137,11 @@ class GitDiffViewerComponent {
     | { key: string; sourceLine: number; cursorIndex: number }
     | undefined
   private requestId = 0
-  private comments = new Map<string, string>()
+  private comments = new CommentStore<string>()
   private cached?: { width: number; lines: string[] }
   private spinner?: NodeJS.Timeout
 
   constructor(private options: Options) {
-    this.filterInput.onSubmit = (value) => this.applyFilter(value)
-    this.filterInput.onEscape = () => this.cancelFilter()
-    this.searchInput.onSubmit = (value) => this.applySearch(value)
-    this.searchInput.onEscape = () => this.cancelSearch()
-    this.commentInput.onSubmit = (value) => this.saveComment(value)
-    this.commentInput.onEscape = () => this.cancelComment()
     void this.loadOverview()
   }
 
@@ -205,32 +216,38 @@ class GitDiffViewerComponent {
       this.close()
       return
     }
-    if (this.inputMode === "filter") {
-      if (matchesKey(data, "escape")) this.cancelFilter()
-      else this.filterInput.handleInput(data)
-      this.invalidate()
-      return
-    }
-    if (this.inputMode === "search") {
-      if (matchesKey(data, "escape")) this.cancelSearch()
-      else this.searchInput.handleInput(data)
-      this.invalidate()
-      return
-    }
-    if (this.inputMode === "comment") {
-      this.commentInput.handleInput(data)
-      this.invalidate()
-      return
-    }
-
-    if (this.state.status !== "loaded") {
-      if (data === "q" || matchesKey(data, "escape")) this.close()
-      return
-    }
+    if (this.handleTextInputMode(data)) return
+    if (this.handleNotLoadedInput(data)) return
 
     if (this.focus === "overview") this.handleOverviewInput(data)
     else this.handleViewerInput(data)
     this.invalidate()
+  }
+
+  private handleTextInputMode(data: string): boolean {
+    if (this.inputMode === "filter") this.updateFilterInput(data)
+    else if (this.inputMode === "search") this.updateSearchInput(data)
+    else if (this.inputMode === "comment") this.commentPrompt.handleInput(data)
+    else return false
+
+    this.invalidate()
+    return true
+  }
+
+  private updateFilterInput(data: string): void {
+    if (matchesKey(data, "escape")) this.cancelFilter()
+    else this.filterPrompt.handleInput(data)
+  }
+
+  private updateSearchInput(data: string): void {
+    if (matchesKey(data, "escape")) this.cancelSearch()
+    else this.searchPrompt.handleInput(data)
+  }
+
+  private handleNotLoadedInput(data: string): boolean {
+    if (this.state.status === "loaded") return false
+    if (data === "q" || matchesKey(data, "escape")) this.close()
+    return true
   }
 
   private async loadOverview(): Promise<void> {
@@ -438,21 +455,8 @@ class GitDiffViewerComponent {
       return selected ? this.fillSelected(text, width) : text
     }
     const commentKey = this.commentKey(file, row)
-    const marker = this.comments.has(commentKey)
-      ? this.theme.fg("warning", "●")
-      : row.kind === "added"
-        ? this.theme.fg("success", "+")
-        : row.kind === "removed"
-          ? this.theme.fg("error", "-")
-          : row.kind === "hunk"
-            ? this.theme.fg("accent", "@")
-            : " "
-    const oldText = row.oldLine
-      ? String(row.oldLine).padStart(numberWidth)
-      : " ".repeat(numberWidth)
-    const newText = row.newLine
-      ? String(row.newLine).padStart(numberWidth)
-      : " ".repeat(numberWidth)
+    const marker = this.renderDiffMarker(row, this.comments.has(commentKey))
+    const { oldText, newText } = diffRowLineNumbers(row, numberWidth)
     const gutter = `${marker} ${this.theme.fg("muted", oldText)} ${this.theme.fg("muted", newText)} │ `
     const content = this.decorateRow(file, row)
     const withSearch = this.searchQuery
@@ -473,23 +477,32 @@ class GitDiffViewerComponent {
       : truncateToWidth(line, width, "")
   }
 
+  private renderDiffMarker(row: DiffRow, hasComment: boolean): string {
+    const markerKind = diffRowMarkerKind(row, hasComment)
+    if (markerKind === "comment") return this.theme.fg("warning", "●")
+    if (markerKind === "added") return this.theme.fg("success", "+")
+    if (markerKind === "removed") return this.theme.fg("error", "-")
+    if (markerKind === "hunk") return this.theme.fg("accent", "@")
+    return " "
+  }
+
   private renderFooter(width: number, file: GitChangedFile): string[] {
     if (this.inputMode === "filter")
       return [
         this.theme.fg("warning", "Search changed files"),
-        ...this.filterInput.render(width),
+        ...this.filterPrompt.render(width),
         this.theme.fg("dim", "enter search · esc clear"),
       ]
     if (this.inputMode === "search")
       return [
         this.theme.fg("warning", `Search ${file.path}`),
-        ...this.searchInput.render(width),
+        ...this.searchPrompt.render(width),
         this.theme.fg("dim", "enter search · esc clear"),
       ]
     if (this.inputMode === "comment")
       return [
         this.theme.fg("warning", `Comment ${this.commentLocation(file)}`),
-        ...this.commentInput.render(width),
+        ...this.commentPrompt.render(width),
         this.theme.fg("dim", "enter save · esc cancel"),
       ]
     const toggleHint = this.viewMode === "diff" ? "v file" : "v diff"
@@ -502,58 +515,67 @@ class GitDiffViewerComponent {
 
   private handleOverviewInput(data: string): void {
     const files = this.filteredFiles()
-    const half = Math.max(1, Math.floor(this.overviewHeight() / 2))
-    const viewerHalf = Math.max(1, Math.floor(this.viewerHeight() / 2))
-    if (data === "q") this.close()
-    else if (matchesKey(data, "escape")) {
-      if (this.overviewBuffer.hasSearch()) this.overviewBuffer.clearSearch()
-      else this.close()
-    } else if (matchesKey(data, "enter")) this.focus = "viewer"
-    else if (matchesKey(data, "ctrl+d"))
-      this.moveViewerCentered(this.viewerLine + viewerHalf, this.currentRows())
-    else if (matchesKey(data, "ctrl+u"))
-      this.moveViewerCentered(this.viewerLine - viewerHalf, this.currentRows())
-    else if (data === "/") this.startFilter()
-    else if (data === "n") this.moveOverviewSearch(1)
-    else if (data === "N") this.moveOverviewSearch(-1)
-    else if (matchesKey(data, "up") || data === "k")
-      this.selectFile(this.selectedFile - 1, files)
-    else if (matchesKey(data, "down") || data === "j")
-      this.selectFile(this.selectedFile + 1, files)
-    else if (data === "u") this.selectFile(this.selectedFile - half, files)
-    else if (data === "d") this.selectFile(this.selectedFile + half, files)
-    else if (data === "g") this.selectFile(0, files)
-    else if (data === "G") this.selectFile(files.length - 1, files)
+    const action = resolveOverviewAction(data, {
+      hasFilter: this.overviewBuffer.hasSearch(),
+      overviewHalf: Math.max(1, Math.floor(this.overviewHeight() / 2)),
+      viewerHalf: Math.max(1, Math.floor(this.viewerHeight() / 2)),
+      lastIndex: files.length - 1,
+    })
+    this.runOverviewAction(action, files)
+  }
+
+  private runOverviewAction(
+    action: ReturnType<typeof resolveOverviewAction>,
+    files: GitChangedFile[],
+  ): void {
+    if (action.type === "close") this.close()
+    else if (action.type === "clearFilter") this.overviewBuffer.clearSearch()
+    else if (action.type === "focusViewer") this.focus = "viewer"
+    else if (action.type === "moveViewerPage")
+      this.moveViewerCentered(
+        this.viewerLine + action.delta,
+        this.currentRows(),
+      )
+    else if (action.type === "startFilter") this.startFilter()
+    else if (action.type === "moveOverviewSearch")
+      this.moveOverviewSearch(action.delta)
+    else if (action.type === "selectFile")
+      this.selectFile(this.selectedFile + action.delta, files)
+    else if (action.type === "selectFileAbsolute")
+      this.selectFile(action.index, files)
   }
 
   private handleViewerInput(data: string): void {
     const rows = this.currentRows()
-    const half = Math.max(1, Math.floor(this.viewerHeight() / 2))
-    if (data === "q") this.close()
-    else if (matchesKey(data, "escape")) {
-      if (this.viewerBuffer.hasSearch()) this.cancelSearch()
-      else this.focus = "overview"
-    } else if (matchesKey(data, "tab"))
-      this.selectFile(this.selectedFile + 1, this.filteredFiles())
-    else if (matchesKey(data, "shift+tab"))
-      this.selectFile(this.selectedFile - 1, this.filteredFiles())
-    else if (matchesKey(data, "up") || data === "k")
-      this.moveViewer(this.viewerLine - 1, rows)
-    else if (matchesKey(data, "down") || data === "j")
-      this.moveViewer(this.viewerLine + 1, rows)
-    else if (data === "u" || matchesKey(data, "ctrl+u"))
-      this.moveViewerCentered(this.viewerLine - half, rows)
-    else if (data === "d" || matchesKey(data, "ctrl+d"))
-      this.moveViewerCentered(this.viewerLine + half, rows)
-    else if (data === "g") this.moveViewer(1, rows)
-    else if (data === "G") this.moveViewer(rows.length, rows)
-    else if (data === "/") this.startSearch()
-    else if (data === "n") this.moveSearch(1)
-    else if (data === "N") this.moveSearch(-1)
-    else if (data === "v") this.toggleViewMode()
-    else if (data === "c" || matchesKey(data, "enter")) this.startComment()
-    else if (data === "x") this.removeComment()
-    else if (data === "C") this.clearComments()
+    const action = resolveViewerAction(data, {
+      hasSearch: this.viewerBuffer.hasSearch(),
+      half: Math.max(1, Math.floor(this.viewerHeight() / 2)),
+      lastLine: rows.length,
+    })
+    this.runViewerAction(action, rows)
+  }
+
+  private runViewerAction(
+    action: ReturnType<typeof resolveViewerAction>,
+    rows: DiffRow[],
+  ): void {
+    if (action.type === "close") this.close()
+    else if (action.type === "clearSearch") this.cancelSearch()
+    else if (action.type === "focusOverview") this.focus = "overview"
+    else if (action.type === "selectFile")
+      this.selectFile(this.selectedFile + action.delta, this.filteredFiles())
+    else if (action.type === "moveViewer")
+      this.moveViewer(this.viewerLine + action.delta, rows)
+    else if (action.type === "moveViewerPage")
+      this.moveViewerCentered(this.viewerLine + action.delta, rows)
+    else if (action.type === "moveViewerAbsolute")
+      this.moveViewer(action.line, rows)
+    else if (action.type === "startSearch") this.startSearch()
+    else if (action.type === "moveSearch") this.moveSearch(action.delta)
+    else if (action.type === "toggleViewMode") this.toggleViewMode()
+    else if (action.type === "startComment") this.startComment()
+    else if (action.type === "removeComment") this.removeComment()
+    else if (action.type === "clearComments") this.clearComments()
   }
 
   private ensureCurrentLoaded(): void {
@@ -775,14 +797,13 @@ class GitDiffViewerComponent {
 
   private startFilter(): void {
     this.inputMode = "filter"
-    this.filterInput.setValue(this.overviewBuffer.searchQuery)
-    this.filterInput.focused = true
+    this.filterPrompt.start(this.overviewBuffer.searchQuery)
   }
   private applyFilter(value: string): void {
     this.saveViewerPosition()
     this.overviewBuffer.setSearch(value)
     this.inputMode = "normal"
-    this.filterInput.focused = false
+    this.filterPrompt.stop()
     this.moveOverviewSearch(1, true)
     this.restoreViewerPosition()
     this.ensureCurrentLoaded()
@@ -790,29 +811,26 @@ class GitDiffViewerComponent {
   private cancelFilter(): void {
     this.saveViewerPosition()
     this.inputMode = "normal"
-    this.filterInput.setValue("")
+    this.filterPrompt.stop({ clear: true })
     this.overviewBuffer.clearSearch()
-    this.filterInput.focused = false
     this.selectedFile = 0
     this.restoreViewerPosition()
     this.ensureCurrentLoaded()
   }
   private startSearch(): void {
     this.inputMode = "search"
-    this.searchInput.setValue(this.searchQuery)
-    this.searchInput.focused = true
+    this.searchPrompt.start(this.searchQuery)
   }
   private applySearch(value: string): void {
     this.searchQuery = value.trim()
     this.inputMode = "normal"
-    this.searchInput.focused = false
+    this.searchPrompt.stop()
     if (this.searchQuery) this.moveSearch(1, true)
   }
   private cancelSearch(): void {
     this.inputMode = "normal"
     this.searchQuery = ""
-    this.searchInput.setValue("")
-    this.searchInput.focused = false
+    this.searchPrompt.stop({ clear: true })
   }
 
   private startComment(): void {
@@ -821,8 +839,7 @@ class GitDiffViewerComponent {
     if (!file || !row) return
     const key = this.commentKey(file, row)
     this.inputMode = "comment"
-    this.commentInput.setValue(this.comments.get(key) ?? "")
-    this.commentInput.focused = true
+    this.commentPrompt.start(this.comments.get(key) ?? "")
   }
 
   private saveComment(value: string): void {
@@ -830,17 +847,14 @@ class GitDiffViewerComponent {
     const row = this.currentRows()[this.viewerLine - 1]
     if (!file || !row) return
     const key = this.commentKey(file, row)
-    const trimmed = value.trim()
-    if (trimmed) this.comments.set(key, trimmed)
-    else this.comments.delete(key)
+    this.comments.save(key, value)
     this.inputMode = "normal"
-    this.commentInput.focused = false
+    this.commentPrompt.stop()
   }
 
   private cancelComment(): void {
     this.inputMode = "normal"
-    this.commentInput.setValue("")
-    this.commentInput.focused = false
+    this.commentPrompt.stop({ clear: true })
   }
   private removeComment(): void {
     const file = this.currentFile()
@@ -867,29 +881,8 @@ class GitDiffViewerComponent {
   }
 
   private getComments(): GitDiffComment[] {
-    const output: GitDiffComment[] = []
     const files = this.state.status === "loaded" ? this.state.files : []
-    for (const file of files) {
-      for (const [key, text] of this.comments) {
-        if (!key.startsWith(`${file.id}\t`)) continue
-        const parts = key.split("\t")
-        const kind = parts[1]
-        const removed = kind === "old"
-        const line = kind === "file" ? undefined : Number(parts[2])
-        const lineOrder = Number.isFinite(line)
-          ? (line as number)
-          : output.length
-        output.push({
-          fileId: file.id,
-          path: file.path,
-          line: Number.isFinite(line) ? line : undefined,
-          removed,
-          text,
-          order: kind === "file" ? Number.MAX_SAFE_INTEGER : lineOrder,
-        })
-      }
-    }
-    return output
+    return buildGitDiffComments(files, this.comments.asReadonlyMap())
   }
 
   private close(): void {
@@ -919,9 +912,8 @@ class GitDiffViewerComponent {
     return `${this.theme.fg("error", `-${file.removed}`)} ${this.theme.fg("success", `+${file.added}`)}`
   }
   private commentsForFile(fileId: string): number {
-    return [...this.comments.keys()].filter((key) =>
-      key.startsWith(`${fileId}\t`),
-    ).length
+    return this.comments.keys().filter((key) => key.startsWith(`${fileId}\t`))
+      .length
   }
   private overviewHeight(): number {
     return Math.min(
