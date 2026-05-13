@@ -19,6 +19,7 @@ import {
   countLogicalLines,
   type NormalizedEditInput,
 } from "./diff.js"
+import { openGitDiffViewer } from "./git-diff-viewer.js"
 import { resolvePath } from "./path.js"
 import {
   addReviewFile,
@@ -86,6 +87,13 @@ export default function (pi: ExtensionAPI) {
     description: "View a recent write/edit tool call in a reusable file viewer",
     handler: async (_args, ctx) => {
       await reviewFile(ctx)
+    },
+  })
+
+  pi.registerCommand("view-diff", {
+    description: "Review uncommitted git changes",
+    handler: async (_args, ctx) => {
+      await openGitDiffViewer(ctx)
     },
   })
 

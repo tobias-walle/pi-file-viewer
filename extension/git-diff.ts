@@ -1,0 +1,396 @@
+import { execFile } from "node:child_process"
+import { open, readFile, stat } from "node:fs/promises"
+import { join } from "node:path"
+import { countLogicalLines } from "./diff.js"
+import type { DiffRow, GitChangedFile, GitDiffLoadResult } from "./types.js"
+
+export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+export const MAX_GIT_DIFF_INLINE_BYTES = 1024 * 1024
+
+export type GitRepoDiscovery =
+  | { status: "ok"; root: string; base: string }
+  | { status: "not-repo"; message: string }
+
+export async function discoverGitRepository(
+  cwd: string,
+): Promise<GitRepoDiscovery> {
+  const rootResult = await gitMaybe(["rev-parse", "--show-toplevel"], cwd)
+  if (rootResult.code !== 0) {
+    return { status: "not-repo", message: "Not a Git repository" }
+  }
+
+  const root = rootResult.stdout.trim()
+  const headResult = await gitMaybe(["rev-parse", "--verify", "HEAD"], root)
+  const base = headResult.code === 0 ? headResult.stdout.trim() : EMPTY_TREE
+  return { status: "ok", root, base }
+}
+
+export async function loadGitChangedFiles(
+  root: string,
+  base: string,
+): Promise<GitChangedFile[]> {
+  const [nameStatus, numstat, untracked] = await Promise.all([
+    git(["diff", "--name-status", "-M", base, "--"], root),
+    git(["diff", "--numstat", "-M", base, "--"], root),
+    git(["ls-files", "--others", "--exclude-standard", "-z"], root),
+  ])
+
+  const files = parseNameStatus(nameStatus)
+  applyNumstat(files, numstat)
+
+  for (const path of splitNul(untracked)) {
+    if (!path) continue
+    const file = await buildUntrackedOverview(root, path)
+    files.push(file)
+  }
+
+  return files
+}
+
+export async function loadGitDiffRows(
+  file: GitChangedFile,
+  root: string,
+  base: string,
+): Promise<GitDiffLoadResult> {
+  if (file.large) return largeResult(file)
+  if (file.binary) return binaryResult(file)
+
+  if (file.status === "??") {
+    return await loadUntrackedDiffRows(file, root)
+  }
+
+  const pathspec = file.path
+  const diff = await git(
+    ["diff", "--binary", "--unified=3", "-M", base, "--", pathspec],
+    root,
+  )
+  if (isGitBinaryDiff(diff)) return binaryResult(file)
+  const rows = parseUnifiedDiff(diff)
+  return {
+    status: "ok",
+    rows: rows.length
+      ? rows
+      : cardRows(
+          "No rendered diff",
+          "Git did not return text hunks for this file.",
+        ),
+  }
+}
+
+export async function loadGitFileRows(
+  file: GitChangedFile,
+  root: string,
+  base: string,
+): Promise<GitDiffLoadResult> {
+  if (file.large) return largeResult(file)
+  if (file.binary) return binaryResult(file)
+
+  try {
+    const content =
+      file.status === "D"
+        ? await git(["show", `${base}:${file.oldPath ?? file.path}`], root)
+        : await readFileWithLimit(join(root, file.path))
+    const rows = content.split("\n").map((text, index) => ({
+      kind: "file" as const,
+      text,
+      newLine: index + 1,
+      commentKey: `${file.path}:new:${index + 1}`,
+    }))
+    if (rows.length > 0 && rows[rows.length - 1]?.text === "") rows.pop()
+    return {
+      status: "ok",
+      rows: rows.length
+        ? rows
+        : cardRows("Empty file", "This file has no content."),
+    }
+  } catch (error) {
+    if (error instanceof FileTooLargeError)
+      return {
+        status: "large",
+        rows: cardRows(
+          "Large file",
+          `This file is ${formatBytes(error.size)} and was not rendered inline.`,
+        ),
+      }
+    return {
+      status: "error",
+      rows: cardRows(
+        "Unable to load file",
+        "The final file content could not be read.",
+      ),
+    }
+  }
+}
+
+export function parseNameStatus(output: string): GitChangedFile[] {
+  const files: GitChangedFile[] = []
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue
+    const parts = line.split("\t")
+    const rawStatus = parts[0] ?? "M"
+    const status = normalizeStatus(rawStatus)
+    if (status === "R") {
+      const oldPath = parts[1] ?? ""
+      const path = parts[2] ?? oldPath
+      files.push({
+        id: `R:${oldPath}:${path}`,
+        path,
+        oldPath,
+        status,
+        added: 0,
+        removed: 0,
+      })
+    } else {
+      const path = parts[1] ?? ""
+      files.push({
+        id: `${status}:${path}`,
+        path,
+        status,
+        added: 0,
+        removed: 0,
+      })
+    }
+  }
+  return files
+}
+
+export function applyNumstat(files: GitChangedFile[], output: string): void {
+  const byPath = new Map(files.map((file) => [file.path, file]))
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue
+    const parts = line.split("\t")
+    const addedText = parts[0] ?? "0"
+    const removedText = parts[1] ?? "0"
+    const path = parts.length >= 4 ? (parts[3] ?? "") : (parts[2] ?? "")
+    const file = byPath.get(path)
+    if (!file) continue
+    file.binary = addedText === "-" || removedText === "-"
+    file.added = Number.parseInt(addedText, 10) || 0
+    file.removed = Number.parseInt(removedText, 10) || 0
+  }
+}
+
+export function parseUnifiedDiff(diff: string): DiffRow[] {
+  const rows: DiffRow[] = []
+  let oldLine = 0
+  let newLine = 0
+  let inHunk = false
+
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("@@")) {
+      const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/.exec(line)
+      oldLine = match ? Number(match[1]) : oldLine
+      newLine = match ? Number(match[2]) : newLine
+      inHunk = true
+      rows.push({ kind: "hunk", text: line })
+      continue
+    }
+    if (!inHunk) continue
+    if (line.startsWith("\\ No newline")) continue
+
+    if (line.startsWith("+")) {
+      rows.push({
+        kind: "added",
+        text: line.slice(1),
+        newLine,
+        commentKey: `${newLine}:new`,
+      })
+      newLine++
+    } else if (line.startsWith("-")) {
+      rows.push({
+        kind: "removed",
+        text: line.slice(1),
+        oldLine,
+        removed: true,
+        commentKey: `${oldLine}:old`,
+      })
+      oldLine++
+    } else {
+      const text = line.startsWith(" ") ? line.slice(1) : line
+      rows.push({
+        kind: "context",
+        text,
+        oldLine,
+        newLine,
+        commentKey: `${newLine}:new`,
+      })
+      oldLine++
+      newLine++
+    }
+  }
+
+  return rows
+}
+
+async function buildUntrackedOverview(
+  root: string,
+  path: string,
+): Promise<GitChangedFile> {
+  try {
+    const fileStat = await stat(join(root, path))
+    const binary = await isBinaryFile(join(root, path))
+    const large = fileStat.size > MAX_GIT_DIFF_INLINE_BYTES
+    const added =
+      binary || large
+        ? 0
+        : countLogicalLines(await readFile(join(root, path), "utf8"))
+    return {
+      id: `??:${path}`,
+      path,
+      status: "??",
+      added,
+      removed: 0,
+      binary,
+      large,
+      size: fileStat.size,
+    }
+  } catch {
+    return { id: `??:${path}`, path, status: "??", added: 0, removed: 0 }
+  }
+}
+
+async function loadUntrackedDiffRows(
+  file: GitChangedFile,
+  root: string,
+): Promise<GitDiffLoadResult> {
+  try {
+    const content = await readFileWithLimit(join(root, file.path))
+    const rows = content.split("\n").map((text, index) => ({
+      kind: "added" as const,
+      text,
+      newLine: index + 1,
+      commentKey: `${file.path}:new:${index + 1}`,
+    }))
+    if (rows.length > 0 && rows[rows.length - 1]?.text === "") rows.pop()
+    return {
+      status: "ok",
+      rows: rows.length
+        ? rows
+        : cardRows(
+            "Empty untracked file",
+            "This empty file will be included by git add -A.",
+          ),
+    }
+  } catch (error) {
+    if (error instanceof FileTooLargeError) return largeResult(file)
+    return {
+      status: "error",
+      rows: cardRows(
+        "Unable to load file",
+        "The untracked file could not be read.",
+      ),
+    }
+  }
+}
+
+function cardRows(title: string, message: string): DiffRow[] {
+  return [{ kind: "card", text: title, message, commentKey: "file" }]
+}
+
+function largeResult(file: GitChangedFile): GitDiffLoadResult {
+  return {
+    status: "large",
+    rows: cardRows(
+      file.status === "??" ? "Large untracked file" : "Large file",
+      `This file${file.size ? ` is ${formatBytes(file.size)}` : ""} was not rendered inline.`,
+    ),
+  }
+}
+
+function binaryResult(_file: GitChangedFile): GitDiffLoadResult {
+  return {
+    status: "binary",
+    rows: cardRows("Binary file", "Binary content was not rendered inline."),
+  }
+}
+
+function normalizeStatus(status: string): GitChangedFile["status"] {
+  if (status.startsWith("R")) return "R"
+  if (status.startsWith("A")) return "A"
+  if (status.startsWith("D")) return "D"
+  return "M"
+}
+
+function splitNul(text: string): string[] {
+  return text.split("\0").filter(Boolean)
+}
+
+export function isGitBinaryDiff(diff: string): boolean {
+  return (
+    /^Binary files .+ differ$/m.test(diff) || /^GIT binary patch$/m.test(diff)
+  )
+}
+
+async function isBinaryFile(path: string): Promise<boolean> {
+  const handle = await open(path, "r")
+  try {
+    const buffer = Buffer.alloc(8000)
+    const result = await handle.read(buffer, 0, buffer.length, 0)
+    return buffer.subarray(0, result.bytesRead).includes(0)
+  } finally {
+    await handle.close()
+  }
+}
+
+async function readFileWithLimit(path: string): Promise<string> {
+  const fileStat = await stat(path)
+  if (fileStat.size > MAX_GIT_DIFF_INLINE_BYTES)
+    throw new FileTooLargeError(fileStat.size)
+  return await readFile(path, "utf8")
+}
+
+class FileTooLargeError extends Error {
+  constructor(readonly size: number) {
+    super("File is too large")
+  }
+}
+
+function git(args: string[], cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "git",
+      args,
+      { cwd, maxBuffer: 50 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error) reject(new Error(stderr || String(error)))
+        else resolve(stdout)
+      },
+    )
+  })
+}
+
+function gitMaybe(
+  args: string[],
+  cwd: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      args,
+      { cwd, maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        resolve({
+          code:
+            typeof (error as { code?: unknown } | null)?.code === "number"
+              ? (error as { code: number }).code
+              : 0,
+          stdout,
+          stderr,
+        })
+      },
+    )
+  })
+}
+
+export function formatBytes(bytes: number): string {
+  const units = ["B", "KiB", "MiB", "GiB"]
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex++
+  }
+  const formatted =
+    value >= 10 || unitIndex === 0 ? Math.round(value) : value.toFixed(1)
+  return `${formatted} ${units[unitIndex]}`
+}

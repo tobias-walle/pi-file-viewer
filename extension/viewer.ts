@@ -23,11 +23,11 @@ export async function openFileViewer(
 ): Promise<FileViewerResult> {
   const result = await ctx.ui.custom<FileViewerResult>(
     (tui, theme, _kb, done) => {
-      const dialogHeight = getDialogHeight(tui.terminal.rows)
+      const initialDialogHeight = getDialogHeight(tui.terminal.rows)
       const component = new FileViewerComponent({
         file,
         theme,
-        visibleHeight: Math.max(5, dialogHeight - 7),
+        visibleHeight: Math.max(5, initialDialogHeight - 7),
         onClose: done,
         onRequestRender: () => tui.requestRender(),
       })
@@ -39,7 +39,8 @@ export async function openFileViewer(
       })
 
       return {
-        render: (width: number) => component.render(width, dialogHeight),
+        render: (width: number) =>
+          component.render(width, getDialogHeight(tui.terminal.rows)),
         invalidate: () => component.invalidate(),
         handleInput: (data: string) => {
           component.handleInput(data)

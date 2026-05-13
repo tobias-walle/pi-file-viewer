@@ -34,9 +34,23 @@ cp -R pi-file-viewer/extension ~/.pi/agent/extensions/file-viewer
 ## Usage
 
 - Run `/view-file` to select a file to view.
-- Press `Alt+W` to open the same picker from the keyboard.
+- Run `/view-diff` to review everything that would be included by `git add -A`.
+- Press `Alt+W` to open the file picker from the keyboard.
 
-Viewer keys:
+Diff viewer keys:
+
+- Overview focus: `j` / `k`, arrows, `d` / `u`, `g` / `G` move through files
+- Overview focus: `C-d` / `C-u` scrolls the bottom viewer without changing files
+- Overview focus: `/` searches by path, status, or stats, `n` / `N` jumps between matches, `enter` focuses the viewer
+- Viewer focus: `j` / `k`, arrows, `d` / `u`, `g` / `G` move through the current diff or file
+- Viewer focus: `tab` / `shift-tab` changes files
+- Viewer focus: `/` searches, `n` / `N` jumps between matches
+- Viewer focus: `v` toggles diff and final file content
+- Viewer focus: `enter` or `c` comments, `x` removes a comment, `C` clears all comments
+- `Esc` returns from the viewer to the overview, or closes filter/search inputs
+- `q` or `Ctrl+C` closes and pastes collected comments
+
+File viewer keys:
 
 - `j` / `k` or arrow keys: move
 - `d` / `u`: half page down/up

@@ -7,12 +7,31 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui"
+import { decorateSearchMatches } from "./search.js"
 import type {
   FileViewerResult,
   ReviewComment,
   ReviewFile,
   ReviewLineKind,
 } from "./types.js"
+import {
+  borderLine,
+  fillSelected,
+  padToWidth,
+  renderHeader,
+  separatorLine,
+} from "./ui/frame.js"
+import {
+  isBottom,
+  isDown,
+  isEscape,
+  isHalfPageDown,
+  isHalfPageUp,
+  isQuit,
+  isTop,
+  isUp,
+} from "./ui/keys.js"
+import { LineBuffer } from "./ui/line-buffer.js"
 import { highlightForPath } from "./utils/markdown-highlight.js"
 
 type Mode = "view" | "comment" | "search"
@@ -31,10 +50,8 @@ export class FileViewerComponent implements Focusable {
   private visibleHeight: number
   private onClose: (result: FileViewerResult) => void
   private onRequestRender: () => void
-  private selectedLine = 1
-  private scrollOffset = 0
   private comments = new Map<number, string>()
-  private highlightedLines: string[]
+  private buffer = new LineBuffer<string>()
   private cachedWidth?: number
   private cachedBodyHeight?: number
   private cachedLines?: string[]
@@ -60,7 +77,7 @@ export class FileViewerComponent implements Focusable {
     this.visibleHeight = options.visibleHeight
     this.onClose = options.onClose
     this.onRequestRender = options.onRequestRender
-    this.highlightedLines = this.highlightFile()
+    this.buffer.setLines(this.buildBufferLines())
     this.commentInput.onSubmit = (value) => this.saveCommentValue(value)
     this.commentInput.onEscape = () => this.cancelCommentInput()
     this.searchInput.onSubmit = (value) => this.saveSearchValue(value)
@@ -92,7 +109,7 @@ export class FileViewerComponent implements Focusable {
     const innerWidth = Math.max(10, width)
     const bodyHeight = Math.max(5, (height ?? 30) - 7)
     this.visibleHeight = bodyHeight
-    this.ensureSelectedVisible()
+    this.buffer.ensureVisible(bodyHeight)
 
     if (
       this.cachedLines &&
@@ -104,14 +121,14 @@ export class FileViewerComponent implements Focusable {
 
     const lines: string[] = []
     lines.push(this.renderHeader(innerWidth))
-    lines.push(this.theme.fg("borderMuted", "─".repeat(innerWidth)))
+    lines.push(separatorLine(this.theme, innerWidth))
     lines.push(...this.renderBody(innerWidth, bodyHeight))
 
     while (lines.length < bodyHeight + 2) {
       lines.push("")
     }
 
-    lines.push(this.theme.fg("borderMuted", "─".repeat(innerWidth)))
+    lines.push(separatorLine(this.theme, innerWidth))
     lines.push(...this.renderFooter(innerWidth))
 
     const borderedLines = this.addHorizontalBorder(lines, width)
@@ -137,14 +154,15 @@ export class FileViewerComponent implements Focusable {
     }
 
     this.file = file
-    this.highlightedLines = this.highlightFile()
-    this.selectedLine = Math.min(this.selectedLine, this.lineCount())
-    this.ensureSelectedVisible()
+    this.buffer.setLines(this.buildBufferLines())
+    this.buffer.ensureVisible(this.visibleHeight)
     this.invalidate()
   }
 
-  private highlightFile(): string[] {
-    return highlightForPath(this.file.content, this.file.path, this.theme)
+  private buildBufferLines() {
+    return highlightForPath(this.file.content, this.file.path, this.theme).map(
+      (line, index) => ({ id: String(index + 1), text: line, payload: line }),
+    )
   }
 
   private handleViewInput(data: string): void {
@@ -154,9 +172,9 @@ export class FileViewerComponent implements Focusable {
   }
 
   private handleViewControlInput(data: string): boolean {
-    if (!matchesKey(data, "escape") && data !== "q") return false
+    if (!isEscape(data) && data !== "q") return false
 
-    if (matchesKey(data, "escape") && this.searchQuery) {
+    if (isEscape(data) && this.searchQuery) {
       this.clearSearch()
     } else {
       this.close()
@@ -167,12 +185,12 @@ export class FileViewerComponent implements Focusable {
   private handleViewNavigationInput(data: string): boolean {
     const halfPage = Math.max(1, Math.floor(this.visibleHeight / 2))
 
-    if (matchesKey(data, "up") || data === "k") this.moveBy(-1)
-    else if (matchesKey(data, "down") || data === "j") this.moveBy(1)
-    else if (data === "u") this.moveByCentered(-halfPage)
-    else if (data === "d") this.moveByCentered(halfPage)
-    else if (data === "g") this.moveTo(1)
-    else if (data === "G") this.moveTo(this.lineCount())
+    if (isUp(data)) this.moveBy(-1)
+    else if (isDown(data)) this.moveBy(1)
+    else if (isHalfPageUp(data)) this.moveByCentered(-halfPage)
+    else if (isHalfPageDown(data)) this.moveByCentered(halfPage)
+    else if (isTop(data)) this.moveTo(1)
+    else if (isBottom(data)) this.moveTo(this.lineCount())
     else return false
 
     return true
@@ -191,21 +209,22 @@ export class FileViewerComponent implements Focusable {
     const title = `${this.file.kind} ${this.file.path}`
     const status = this.file.status === "streaming" ? "streaming, " : ""
     const meta = `${status}${this.lineCount()} lines, ${this.comments.size} comments`
-    const text = `${this.theme.fg("accent", this.theme.bold(title))} ${this.theme.fg("dim", meta)}`
-    return truncateToWidth(text, width, "")
+    return renderHeader(this.theme, title, meta, width)
   }
 
   private renderBody(width: number, height: number): string[] {
     const numberWidth = String(this.lineCount()).length
     const lines: string[] = []
 
-    for (
-      let lineNumber = this.scrollOffset + 1;
-      lineNumber <= this.lineCount() && lines.length < height;
-      lineNumber++
-    ) {
-      const renderedLines = this.renderLine(lineNumber, numberWidth, width)
+    for (const { index, line } of this.buffer.visibleLines(height)) {
+      const renderedLines = this.renderLine(
+        index + 1,
+        line.payload,
+        numberWidth,
+        width,
+      )
       lines.push(...renderedLines.slice(0, height - lines.length))
+      if (lines.length >= height) break
     }
 
     return lines
@@ -213,6 +232,7 @@ export class FileViewerComponent implements Focusable {
 
   private renderLine(
     lineNumber: number,
+    content: string,
     numberWidth: number,
     width: number,
   ): string[] {
@@ -225,11 +245,12 @@ export class FileViewerComponent implements Focusable {
     const gutter = `${cursor}${marker} ${this.theme.fg("muted", lineNumberText)} │ `
     const continuationGutter = " ".repeat(visibleWidth(gutter))
     const contentWidth = Math.max(1, width - visibleWidth(gutter))
-    const content = this.highlightedLines[lineNumber - 1] ?? ""
     const decoratedContent = this.decorateContent(content, lineKind)
     const renderedContent = this.searchQuery
-      ? this.decorateSearchMatches(
+      ? decorateSearchMatches(
           decoratedContent,
+          this.searchQuery,
+          this.theme,
           isSelected ? this.theme.getBgAnsi("selectedBg") : RESET_BG,
         )
       : decoratedContent
@@ -245,10 +266,7 @@ export class FileViewerComponent implements Focusable {
 
     if (!isSelected) return renderedLines
 
-    return renderedLines.map((line) => {
-      const padding = " ".repeat(Math.max(0, width - visibleWidth(line)))
-      return this.theme.bg("selectedBg", `${line}${padding}`)
-    })
+    return renderedLines.map((line) => fillSelected(this.theme, line, width))
   }
 
   private renderLineMarker(
@@ -260,70 +278,6 @@ export class FileViewerComponent implements Focusable {
     if (lineKind === "changed") return this.theme.fg("warning", "~")
     if (lineKind === "removed") return this.theme.fg("error", "-")
     return " "
-  }
-
-  private decorateSearchMatches(content: string, restoreBg: string): string {
-    if (!this.searchQuery) return content
-
-    const ranges = this.getSearchMatchRanges(stripAnsi(content))
-    if (ranges.length === 0) return content
-
-    const searchBg = this.searchHighlightBg()
-    let rangeIndex = 0
-    let visibleIndex = 0
-    let output = ""
-
-    for (let index = 0; index < content.length; index++) {
-      if (content[index] === ESC) {
-        const sequenceEnd = content.indexOf("m", index)
-        if (sequenceEnd >= 0) {
-          output += content.slice(index, sequenceEnd + 1)
-          index = sequenceEnd
-          continue
-        }
-      }
-
-      const range = ranges[rangeIndex]
-      if (range && visibleIndex === range.start) output += searchBg
-
-      output += content[index]
-      visibleIndex++
-
-      if (range && visibleIndex === range.end) {
-        output += restoreBg
-        rangeIndex++
-      }
-    }
-
-    return output
-  }
-
-  private searchHighlightBg(): string {
-    if (this.theme.getColorMode() === "truecolor") return `${ESC}[48;2;90;74;0m`
-    return `${ESC}[48;5;58m`
-  }
-
-  private getSearchMatchRanges(
-    line: string,
-  ): Array<{ start: number; end: number }> {
-    if (!this.searchQuery) return []
-
-    const lowerLine = line.toLowerCase()
-    const lowerQuery = this.searchQuery.toLowerCase()
-    const ranges: Array<{ start: number; end: number }> = []
-    let position = 0
-
-    while (position < line.length) {
-      const matchIndex = lowerLine.indexOf(lowerQuery, position)
-      if (matchIndex < 0) break
-      ranges.push({
-        start: matchIndex,
-        end: matchIndex + this.searchQuery.length,
-      })
-      position = matchIndex + this.searchQuery.length
-    }
-
-    return ranges
   }
 
   private decorateContent(
@@ -387,6 +341,7 @@ export class FileViewerComponent implements Focusable {
   private saveSearchValue(value: string): void {
     const trimmed = value.trim()
     this.searchQuery = trimmed
+    this.buffer.setSearch(trimmed)
     this.mode = "view"
     this.searchInput.focused = false
     if (trimmed) {
@@ -402,6 +357,7 @@ export class FileViewerComponent implements Focusable {
 
   private clearSearch(): void {
     this.searchQuery = ""
+    this.buffer.clearSearch()
     this.searchInput.setValue("")
     this.searchInput.focused = false
     this.invalidateAndRender()
@@ -448,94 +404,37 @@ export class FileViewerComponent implements Focusable {
   }
 
   private moveBy(amount: number): void {
-    this.moveTo(this.selectedLine + amount)
+    this.buffer.move(amount)
+    this.buffer.ensureVisible(this.visibleHeight)
+    this.invalidateAndRender()
   }
 
   private moveByCentered(amount: number): void {
-    const nextLine = Math.max(
-      1,
-      Math.min(this.lineCount(), this.selectedLine + amount),
-    )
-    if (nextLine === this.selectedLine) return
-    this.selectedLine = nextLine
-    this.centerSelectedLine()
+    this.buffer.moveCentered(amount, this.visibleHeight)
     this.invalidateAndRender()
   }
 
   private moveToSearchMatch(direction: 1 | -1, includeCurrent = false): void {
-    if (!this.searchQuery) return
-
-    const matches = this.getSearchMatches()
-    if (matches.length === 0) return
-
-    const nextLine =
-      direction > 0
-        ? (matches.find((line) =>
-            includeCurrent
-              ? line >= this.selectedLine
-              : line > this.selectedLine,
-          ) ?? matches[0])
-        : ([...matches]
-            .reverse()
-            .find((line) =>
-              includeCurrent
-                ? line <= this.selectedLine
-                : line < this.selectedLine,
-            ) ?? matches[matches.length - 1])
-
-    this.moveToCentered(nextLine)
-  }
-
-  private getSearchMatches(): number[] {
-    if (!this.searchQuery) return []
-    const query = this.searchQuery.toLowerCase()
-    const matches: number[] = []
-
-    for (let index = 0; index < this.highlightedLines.length; index++) {
-      const line = stripAnsi(this.highlightedLines[index] ?? "").toLowerCase()
-      if (line.includes(query)) {
-        matches.push(index + 1)
-      }
-    }
-
-    return matches
+    const moved = this.buffer.search(
+      direction,
+      includeCurrent,
+      this.visibleHeight,
+    )
+    if (moved) this.invalidateAndRender()
   }
 
   private moveTo(line: number): void {
-    const nextLine = Math.max(1, Math.min(this.lineCount(), line))
-    if (nextLine === this.selectedLine) return
-    this.selectedLine = nextLine
-    this.ensureSelectedVisible()
+    this.buffer.moveTo(line - 1)
+    this.buffer.ensureVisible(this.visibleHeight)
     this.invalidateAndRender()
   }
 
-  private moveToCentered(line: number): void {
-    const nextLine = Math.max(1, Math.min(this.lineCount(), line))
-    if (nextLine === this.selectedLine) return
-    this.selectedLine = nextLine
-    this.centerSelectedLine()
-    this.invalidateAndRender()
-  }
-
-  private centerSelectedLine(): void {
-    const maxOffset = Math.max(0, this.lineCount() - this.visibleHeight)
-    const centeredOffset = this.selectedLine - Math.ceil(this.visibleHeight / 2)
-    this.scrollOffset = Math.max(0, Math.min(maxOffset, centeredOffset))
-  }
-
-  private ensureSelectedVisible(): void {
-    if (this.selectedLine <= this.scrollOffset) {
-      this.scrollOffset = this.selectedLine - 1
-      return
-    }
-
-    if (this.selectedLine > this.scrollOffset + this.visibleHeight) {
-      this.scrollOffset = this.selectedLine - this.visibleHeight
-    }
+  private get selectedLine(): number {
+    return this.buffer.cursorIndex + 1
   }
 
   private lineCount(): number {
-    return Math.max(1, this.highlightedLines.length)
+    return Math.max(1, this.buffer.length)
   }
 
   private invalidateAndRender(): void {
@@ -545,27 +444,21 @@ export class FileViewerComponent implements Focusable {
 
   private addHorizontalBorder(lines: string[], width: number): string[] {
     const innerWidth = Math.max(0, width)
-    const result = [this.theme.fg("border", "─".repeat(innerWidth))]
+    const result = [borderLine(this.theme, innerWidth)]
 
     for (const line of lines) {
       const text = truncateToWidth(line, innerWidth, "")
-      const padding = Math.max(0, innerWidth - visibleWidth(text))
-      result.push(`${text}${" ".repeat(padding)}`)
+      result.push(padToWidth(text, innerWidth))
     }
 
-    result.push(this.theme.fg("border", "─".repeat(innerWidth)))
+    result.push(borderLine(this.theme, innerWidth))
     return result
   }
 }
 
 const ESC = String.fromCharCode(27)
 const RESET_BG = `${ESC}[49m`
-const ANSI_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, "g")
-
-function stripAnsi(text: string): string {
-  return text.replace(ANSI_PATTERN, "")
-}
 
 function isCtrlC(data: string): boolean {
-  return matchesKey(data, "ctrl+c")
+  return isQuit(data) && data !== "q"
 }
