@@ -50,6 +50,75 @@ const OVERLAY_OPTIONS = {
   },
 }
 
+const MIN_DIALOG_HEIGHT = 12
+const DIALOG_HEIGHT_RATIO = 0.82
+const MIN_OVERVIEW_HEIGHT = 5
+const MAX_OVERVIEW_HEIGHT = 8
+const OVERVIEW_HEIGHT_RATIO = 0.22
+const MIN_VIEWER_BODY_HEIGHT = 1
+
+const OVERVIEW_CHROME_LINES = {
+  topBorder: 1,
+  header: 1,
+  separator: 1,
+} as const
+
+const VIEWER_CHROME_LINES = {
+  header: 1,
+  topSeparator: 1,
+  bottomSeparator: 1,
+  footer: 1,
+  bottomBorder: 1,
+} as const
+
+const TEXT_INPUT_EXTRA_LINES = 2
+
+export interface GitDiffViewerLayout {
+  totalHeight: number
+  overviewHeight: number
+  overviewBodyHeight: number
+  viewerHeight: number
+  viewerBodyHeight: number
+}
+
+export function calculateGitDiffViewerLayout(
+  terminalRows: number,
+  inputExtraLines = 0,
+): GitDiffViewerLayout {
+  const totalHeight = Math.max(
+    MIN_DIALOG_HEIGHT,
+    Math.floor(terminalRows * DIALOG_HEIGHT_RATIO),
+  )
+  const overviewHeight = Math.min(
+    MAX_OVERVIEW_HEIGHT,
+    Math.max(
+      MIN_OVERVIEW_HEIGHT,
+      Math.floor(totalHeight * OVERVIEW_HEIGHT_RATIO),
+    ),
+  )
+  const viewerHeight = Math.max(1, totalHeight - overviewHeight)
+  const overviewBodyHeight = Math.max(
+    1,
+    overviewHeight - chromeHeight(OVERVIEW_CHROME_LINES),
+  )
+  const viewerBodyHeight = Math.max(
+    MIN_VIEWER_BODY_HEIGHT,
+    viewerHeight - chromeHeight(VIEWER_CHROME_LINES) - inputExtraLines,
+  )
+
+  return {
+    totalHeight,
+    overviewHeight,
+    overviewBodyHeight,
+    viewerHeight,
+    viewerBodyHeight,
+  }
+}
+
+function chromeHeight(chrome: Record<string, number>): number {
+  return Object.values(chrome).reduce((total, lines) => total + lines, 0)
+}
+
 type FocusPane = "overview" | "viewer"
 type ViewMode = "diff" | "file"
 type InputMode = "normal" | "filter" | "search" | "comment"
@@ -206,7 +275,7 @@ class GitDiffViewerComponent {
 
   render(width: number): string[] {
     if (this.cached?.width === width) return this.cached.lines
-    const height = Math.max(12, Math.floor(this.options.terminalRows * 0.82))
+    const height = this.layout().totalHeight
     const lines = this.renderContent(Math.max(20, width), height)
     this.cached = { width, lines }
     return lines
@@ -307,12 +376,7 @@ class GitDiffViewerComponent {
         "No uncommitted changes found in this repository.",
       )
 
-    const overviewHeight = Math.min(8, Math.max(5, Math.floor(height * 0.22)))
-    const viewerHeight = Math.max(8, height - overviewHeight)
-    return [
-      ...this.renderOverview(width, overviewHeight),
-      ...this.renderViewer(width, viewerHeight),
-    ]
+    return [...this.renderOverview(width), ...this.renderViewer(width)]
   }
 
   private renderStateCard(
@@ -336,7 +400,7 @@ class GitDiffViewerComponent {
     return lines
   }
 
-  private renderOverview(width: number, height: number): string[] {
+  private renderOverview(width: number): string[] {
     const files = this.filteredFiles()
     this.overviewBuffer.setLines(this.buildOverviewLines(files))
     const lines = [
@@ -344,7 +408,7 @@ class GitDiffViewerComponent {
       this.renderHeader("Git changes", `${files.length} files`),
       this.separatorLine(width),
     ]
-    const bodyHeight = Math.max(1, height - 3)
+    const bodyHeight = this.layout().overviewBodyHeight
     this.ensureOverviewVisible(files, bodyHeight)
     for (let row = 0; row < bodyHeight; row++) {
       const index = this.overviewScroll + row
@@ -391,7 +455,7 @@ class GitDiffViewerComponent {
       : `${line}${padding}`
   }
 
-  private renderViewer(width: number, height: number): string[] {
+  private renderViewer(width: number): string[] {
     const file = this.currentFile()
     if (!file) return []
     const state = this.getLoadState(file)
@@ -413,7 +477,7 @@ class GitDiffViewerComponent {
       ),
       this.separatorLine(width),
     ]
-    const bodyHeight = Math.max(1, height - 5 - this.inputExtraLines())
+    const bodyHeight = this.layout().viewerBodyHeight
     this.viewerBuffer.setLines(this.buildViewerLines(rows))
     this.applyPendingViewerLine(rows, bodyHeight)
     this.ensureViewerVisible(rows, bodyHeight)
@@ -959,29 +1023,22 @@ class GitDiffViewerComponent {
       .length
   }
   private overviewHeight(): number {
-    return Math.min(
-      8,
-      Math.max(
-        5,
-        Math.floor(
-          Math.max(12, Math.floor(this.options.terminalRows * 0.82)) * 0.22,
-        ),
-      ),
-    )
+    return this.layout().overviewBodyHeight
   }
   private viewerHeight(): number {
-    return Math.max(
-      1,
-      Math.max(12, Math.floor(this.options.terminalRows * 0.82)) -
-        this.overviewHeight() -
-        4,
+    return this.layout().viewerBodyHeight
+  }
+  private layout(): GitDiffViewerLayout {
+    return calculateGitDiffViewerLayout(
+      this.options.terminalRows,
+      this.inputExtraLines(),
     )
   }
   private inputExtraLines(): number {
     return this.inputMode === "filter" ||
       this.inputMode === "search" ||
       this.inputMode === "comment"
-      ? 2
+      ? TEXT_INPUT_EXTRA_LINES
       : 0
   }
 

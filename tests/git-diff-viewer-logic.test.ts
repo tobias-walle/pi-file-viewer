@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { calculateGitDiffViewerLayout } from "../extension/git-diff-viewer.js"
 import {
   resolveOverviewAction,
   resolveViewerAction,
@@ -28,4 +29,22 @@ test("overview d/u keys scroll the diff viewer", () => {
       lastIndex: 10,
     }),
   ).toEqual({ type: "moveViewerPage", delta: -7 })
+})
+
+test("diff viewer layout derives scrollable body heights from chrome", () => {
+  expect(calculateGitDiffViewerLayout(40)).toEqual({
+    totalHeight: 32,
+    overviewHeight: 7,
+    overviewBodyHeight: 4,
+    viewerHeight: 25,
+    viewerBodyHeight: 20,
+  })
+
+  expect(calculateGitDiffViewerLayout(40, 2)).toEqual({
+    totalHeight: 32,
+    overviewHeight: 7,
+    overviewBodyHeight: 4,
+    viewerHeight: 25,
+    viewerBodyHeight: 18,
+  })
 })
