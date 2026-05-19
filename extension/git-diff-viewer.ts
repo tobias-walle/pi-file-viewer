@@ -6,7 +6,10 @@ import {
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui"
 import { CommentStore } from "./comment-store.js"
-import { deltaIntralineRanges } from "./delta-intraline.js"
+import {
+  buildDeltaIntralineRangeCache,
+  type IntralineRange,
+} from "./delta-intraline.js"
 import {
   discoverGitRepository,
   loadGitChangedFiles,
@@ -37,7 +40,7 @@ import {
   separatorLine as renderSeparatorLine,
   shortenLeft,
 } from "./ui/frame.js"
-import { LineBuffer } from "./ui/line-buffer.js"
+import { type BufferLine, LineBuffer } from "./ui/line-buffer.js"
 import { TextPrompt } from "./ui/text-prompt.js"
 import { highlightForPath } from "./utils/markdown-highlight.js"
 
@@ -136,6 +139,13 @@ type TopState =
   | { status: "error"; message: string }
   | { status: "loaded"; root: string; base: string; files: GitChangedFile[] }
 
+interface PreparedDiffRows {
+  viewerLines: BufferLine<DiffRow>[]
+  numberWidth: number
+  highlightedTextByIndex: string[]
+  intralineRangesByIndex: IntralineRange[][]
+}
+
 export async function openGitDiffViewer(
   ctx: ExtensionContext,
 ): Promise<GitDiffViewerResult> {
@@ -201,6 +211,7 @@ class GitDiffViewerComponent {
     onCancel: () => this.cancelComment(),
   })
   private cache = new Map<string, LoadState>()
+  private preparedRowsCache = new WeakMap<DiffRow[], PreparedDiffRows>()
   private viewerPositions = new Map<string, { line: number; scroll: number }>()
   private pendingViewerLines = new Map<string, number>()
   private viewerLineAnchor:
@@ -402,7 +413,6 @@ class GitDiffViewerComponent {
 
   private renderOverview(width: number): string[] {
     const files = this.filteredFiles()
-    this.overviewBuffer.setLines(this.buildOverviewLines(files))
     const lines = [
       this.borderLine(width),
       this.renderHeader("Git changes", `${files.length} files`),
@@ -478,10 +488,11 @@ class GitDiffViewerComponent {
       this.separatorLine(width),
     ]
     const bodyHeight = this.layout().viewerBodyHeight
-    this.viewerBuffer.setLines(this.buildViewerLines(rows))
+    const prepared = this.preparedRows(file, rows)
+    this.setViewerLines(prepared.viewerLines)
     this.applyPendingViewerLine(rows, bodyHeight)
     this.ensureViewerVisible(rows, bodyHeight)
-    const numberWidth = this.numberWidth(rows)
+    const numberWidth = prepared.numberWidth
     let rowIndex = this.viewerScroll
     while (lines.length < bodyHeight + 2) {
       const row = rows[rowIndex]
@@ -493,7 +504,7 @@ class GitDiffViewerComponent {
 
       const renderedRows = this.renderDiffRow(
         file,
-        rows,
+        prepared,
         row,
         rowIndex,
         numberWidth,
@@ -510,7 +521,7 @@ class GitDiffViewerComponent {
 
   private renderDiffRow(
     file: GitChangedFile,
-    rows: DiffRow[],
+    prepared: PreparedDiffRows,
     row: DiffRow,
     rowIndex: number,
     numberWidth: number,
@@ -532,7 +543,7 @@ class GitDiffViewerComponent {
     const { oldText, newText } = diffRowLineNumbers(row, numberWidth)
     const gutter = `${marker} ${this.theme.fg("muted", oldText)} ${this.theme.fg("muted", newText)} │ `
     const rowBg = this.diffRowBg(row)
-    const content = this.decorateRow(file, rows, row, rowIndex, rowBg)
+    const content = this.decorateRow(prepared, row, rowIndex, rowBg)
     const restoreBg = selected
       ? this.theme.getBgAnsi("selectedBg")
       : (rowBg ?? RESET_BG)
@@ -662,6 +673,7 @@ class GitDiffViewerComponent {
     void loader(file, this.state.root, this.state.base).then(
       (result) => {
         if (requestId > this.requestId) return
+        this.preparedRows(file, result.rows)
         this.cache.set(key, {
           status: "loaded",
           loadStatus: result.status,
@@ -718,12 +730,53 @@ class GitDiffViewerComponent {
     return `${file.status} ${path} -${file.removed} +${file.added}`
   }
 
-  private buildViewerLines(rows: DiffRow[]) {
+  private buildViewerLines(rows: DiffRow[]): BufferLine<DiffRow>[] {
     return rows.map((row, index) => ({
       id: row.commentKey ?? String(index),
       text: row.text,
       payload: row,
     }))
+  }
+
+  private preparedRows(
+    file: GitChangedFile,
+    rows: DiffRow[],
+  ): PreparedDiffRows {
+    const cached = this.preparedRowsCache.get(rows)
+    if (cached) return cached
+
+    const prepared: PreparedDiffRows = {
+      viewerLines: this.buildViewerLines(rows),
+      numberWidth: this.computeNumberWidth(rows),
+      highlightedTextByIndex: rows.map((row) =>
+        this.highlightDiffRowText(file, row),
+      ),
+      intralineRangesByIndex: buildDeltaIntralineRangeCache(rows),
+    }
+    this.preparedRowsCache.set(rows, prepared)
+    return prepared
+  }
+
+  private setViewerLines(lines: BufferLine<DiffRow>[]): void {
+    if (this.viewerBuffer.lines !== lines) this.viewerBuffer.setLines(lines)
+  }
+
+  private setCurrentViewerRows(rows: DiffRow[]): void {
+    const file = this.currentFile()
+    if (!file) return
+    this.setViewerLines(this.preparedRows(file, rows).viewerLines)
+  }
+
+  private highlightDiffRowText(file: GitChangedFile, row: DiffRow): string {
+    if (
+      row.kind === "file" ||
+      row.kind === "context" ||
+      row.kind === "added" ||
+      row.kind === "removed"
+    ) {
+      return highlightForPath(row.text, file.path, this.theme)[0] ?? row.text
+    }
+    return row.text
   }
 
   private currentFile(): GitChangedFile | undefined {
@@ -740,7 +793,7 @@ class GitDiffViewerComponent {
 
   private moveViewer(line: number, rows: DiffRow[]): void {
     this.clearViewerLineAnchor()
-    this.viewerBuffer.setLines(this.buildViewerLines(rows))
+    this.setCurrentViewerRows(rows)
     this.viewerBuffer.moveTo(line - 1)
     this.viewerBuffer.ensureVisible(this.viewerHeight())
   }
@@ -749,7 +802,7 @@ class GitDiffViewerComponent {
     if (rows.length === 0) return
 
     this.clearViewerLineAnchor()
-    this.viewerBuffer.setLines(this.buildViewerLines(rows))
+    this.setCurrentViewerRows(rows)
 
     const viewportHeight = this.viewerHeight()
     const currentTopRow = this.viewerScroll
@@ -788,7 +841,6 @@ class GitDiffViewerComponent {
   }
 
   private moveOverviewSearch(direction: 1 | -1, includeCurrent = false): void {
-    this.overviewBuffer.setLines(this.buildOverviewLines(this.filteredFiles()))
     if (
       this.overviewBuffer.search(
         direction,
@@ -1060,7 +1112,7 @@ class GitDiffViewerComponent {
       this.viewerScroll = this.viewerLine - height
   }
 
-  private numberWidth(rows: DiffRow[]): number {
+  private computeNumberWidth(rows: DiffRow[]): number {
     return Math.max(
       1,
       String(Math.max(...rows.map((row) => row.newLine ?? row.oldLine ?? 0), 1))
@@ -1069,21 +1121,14 @@ class GitDiffViewerComponent {
   }
 
   private decorateRow(
-    file: GitChangedFile,
-    rows: DiffRow[],
+    prepared: PreparedDiffRows,
     row: DiffRow,
     rowIndex: number,
     rowBg: string | undefined,
   ): string {
     if (row.kind === "hunk") return this.theme.fg("accent", row.text)
-    const highlighted =
-      row.kind === "file" ||
-      row.kind === "context" ||
-      row.kind === "added" ||
-      row.kind === "removed"
-        ? (highlightForPath(row.text, file.path, this.theme)[0] ?? row.text)
-        : row.text
-    const ranges = deltaIntralineRanges(rows, row, rowIndex)
+    const highlighted = prepared.highlightedTextByIndex[rowIndex] ?? row.text
+    const ranges = prepared.intralineRangesByIndex[rowIndex] ?? []
     const highlightBg = this.diffIntralineBg(row)
     return ranges.length > 0 && highlightBg && rowBg
       ? decorateVisibleRanges(highlighted, ranges, highlightBg, rowBg)
@@ -1117,7 +1162,7 @@ class GitDiffViewerComponent {
     const rows = this.currentRows()
     if (!this.searchQuery || rows.length === 0) return
     this.clearViewerLineAnchor()
-    this.viewerBuffer.setLines(this.buildViewerLines(rows))
+    this.setCurrentViewerRows(rows)
     this.viewerBuffer.search(direction, includeCurrent, this.viewerHeight())
   }
 

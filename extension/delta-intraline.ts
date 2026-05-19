@@ -42,6 +42,15 @@ export interface IntralineRange {
   end: number
 }
 
+export interface DeltaIntralineRangeCacheOptions {
+  maxLineDistance?: number
+  maxBlockRows?: number
+  maxLineLength?: number
+}
+
+const DEFAULT_MAX_BLOCK_ROWS = 120
+const DEFAULT_MAX_LINE_LENGTH = 2000
+
 export function deltaIntralineRanges(
   rows: DiffRow[],
   row: DiffRow,
@@ -49,37 +58,77 @@ export function deltaIntralineRanges(
   maxLineDistance = DEFAULT_MAX_LINE_DISTANCE,
 ): IntralineRange[] {
   if (row.kind !== "added" && row.kind !== "removed") return []
-
-  // Delta reasons about contiguous change blocks, not isolated adjacent pairs.
-  // Example: two removed lines followed by two added lines are matched as a small batch.
-  const block = changeBlock(rows, rowIndex)
-  const minusLines = block.rows.filter(
-    (blockRow) => blockRow.kind === "removed",
+  return (
+    buildDeltaIntralineRangeCache(rows, { maxLineDistance })[rowIndex] ?? []
   )
-  const plusLines = block.rows.filter((blockRow) => blockRow.kind === "added")
-  const result = inferEdits(
-    minusLines.map((blockRow) => blockRow.text),
-    plusLines.map((blockRow) => blockRow.text),
-    maxLineDistance,
-  )
-  const sameKindRows = row.kind === "added" ? plusLines : minusLines
-  const annotatedLines =
-    row.kind === "added"
-      ? result.annotatedPlusLines
-      : result.annotatedMinusLines
-  const lineIndex = sameKindRows.indexOf(row)
-  if (lineIndex < 0) return []
-  return annotationsToRanges(annotatedLines[lineIndex] ?? [])
 }
 
-function changeBlock(rows: DiffRow[], rowIndex: number): { rows: DiffRow[] } {
-  let start = rowIndex
-  while (start > 0 && isChangedRow(rows[start - 1])) start--
+export function buildDeltaIntralineRangeCache(
+  rows: DiffRow[],
+  options: DeltaIntralineRangeCacheOptions = {},
+): IntralineRange[][] {
+  const rangesByIndex = rows.map(() => [] as IntralineRange[])
+  const maxLineDistance = options.maxLineDistance ?? DEFAULT_MAX_LINE_DISTANCE
+  const maxBlockRows = options.maxBlockRows ?? DEFAULT_MAX_BLOCK_ROWS
+  const maxLineLength = options.maxLineLength ?? DEFAULT_MAX_LINE_LENGTH
 
-  let end = rowIndex
-  while (end < rows.length - 1 && isChangedRow(rows[end + 1])) end++
+  let index = 0
+  while (index < rows.length) {
+    if (!isChangedRow(rows[index])) {
+      index++
+      continue
+    }
 
-  return { rows: rows.slice(start, end + 1) }
+    const start = index
+    while (index < rows.length && isChangedRow(rows[index])) index++
+    const blockRows = rows.slice(start, index)
+    if (
+      blockRows.length > maxBlockRows ||
+      blockRows.some((blockRow) => blockRow.text.length > maxLineLength)
+    ) {
+      continue
+    }
+
+    fillBlockRanges(
+      rangesByIndex,
+      blockRows.map((blockRow, blockIndex) => ({
+        row: blockRow,
+        index: start + blockIndex,
+      })),
+      maxLineDistance,
+    )
+  }
+
+  return rangesByIndex
+}
+
+function fillBlockRanges(
+  rangesByIndex: IntralineRange[][],
+  blockRows: Array<{ row: DiffRow; index: number }>,
+  maxLineDistance: number,
+): void {
+  // Delta reasons about contiguous change blocks, not isolated adjacent pairs.
+  // Example: two removed lines followed by two added lines are matched as a small batch.
+  const minusRows = blockRows.filter(({ row }) => row.kind === "removed")
+  const plusRows = blockRows.filter(({ row }) => row.kind === "added")
+  if (minusRows.length === 0 || plusRows.length === 0) return
+
+  const result = inferEdits(
+    minusRows.map(({ row }) => row.text),
+    plusRows.map(({ row }) => row.text),
+    maxLineDistance,
+  )
+
+  for (const [lineIndex, { index }] of minusRows.entries()) {
+    rangesByIndex[index] = annotationsToRanges(
+      result.annotatedMinusLines[lineIndex] ?? [],
+    )
+  }
+  for (const [lineIndex, { index }] of plusRows.entries()) {
+    rangesByIndex[index] = annotationsToRanges(
+      result.annotatedPlusLines[lineIndex] ?? [],
+    )
+  }
 }
 
 function isChangedRow(row: DiffRow | undefined): boolean {
