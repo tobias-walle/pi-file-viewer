@@ -6,6 +6,7 @@ import {
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui"
 import { CommentStore } from "./comment-store.js"
+import { deltaIntralineRanges } from "./delta-intraline.js"
 import {
   discoverGitRepository,
   loadGitChangedFiles,
@@ -417,19 +418,25 @@ class GitDiffViewerComponent {
     this.applyPendingViewerLine(rows, bodyHeight)
     this.ensureViewerVisible(rows, bodyHeight)
     const numberWidth = this.numberWidth(rows)
-    for (let i = 0; i < bodyHeight; i++) {
-      const row = rows[this.viewerScroll + i]
-      lines.push(
-        row
-          ? this.renderDiffRow(
-              file,
-              row,
-              this.viewerScroll + i + 1,
-              numberWidth,
-              width,
-            )
-          : "",
+    let rowIndex = this.viewerScroll
+    while (lines.length < bodyHeight + 2) {
+      const row = rows[rowIndex]
+      if (!row) {
+        lines.push("")
+        rowIndex++
+        continue
+      }
+
+      const renderedRows = this.renderDiffRow(
+        file,
+        rows,
+        row,
+        rowIndex,
+        numberWidth,
+        width,
       )
+      lines.push(...renderedRows.slice(0, bodyHeight + 2 - lines.length))
+      rowIndex++
     }
     lines.push(this.separatorLine(width))
     lines.push(...this.renderFooter(width, file))
@@ -439,11 +446,13 @@ class GitDiffViewerComponent {
 
   private renderDiffRow(
     file: GitChangedFile,
+    rows: DiffRow[],
     row: DiffRow,
-    index: number,
+    rowIndex: number,
     numberWidth: number,
     width: number,
-  ): string {
+  ): string[] {
+    const index = rowIndex + 1
     const selected = this.focus === "viewer" && index === this.viewerLine
     if (row.kind === "card") {
       const text =
@@ -452,36 +461,39 @@ class GitDiffViewerComponent {
           : index === 2 && row.message
             ? center(this.theme.fg("dim", row.message), width)
             : ""
-      return selected ? this.fillSelected(text, width) : text
+      return [selected ? this.fillSelected(text, width) : text]
     }
     const commentKey = this.commentKey(file, row)
     const marker = this.renderDiffMarker(row, this.comments.has(commentKey))
     const { oldText, newText } = diffRowLineNumbers(row, numberWidth)
     const gutter = `${marker} ${this.theme.fg("muted", oldText)} ${this.theme.fg("muted", newText)} │ `
-    const content = this.decorateRow(file, row)
+    const rowBg = this.diffRowBg(row)
+    const content = this.decorateRow(file, rows, row, rowIndex, rowBg)
+    const restoreBg = selected
+      ? this.theme.getBgAnsi("selectedBg")
+      : (rowBg ?? RESET_BG)
     const withSearch = this.searchQuery
-      ? decorateSearchMatches(
-          content,
-          this.searchQuery,
-          this.theme,
-          selected ? this.theme.getBgAnsi("selectedBg") : RESET_BG,
-        )
+      ? decorateSearchMatches(content, this.searchQuery, this.theme, restoreBg)
       : content
-    const wrapped = wrapTextWithAnsi(
-      withSearch,
-      Math.max(1, width - visibleWidth(gutter)),
-    )
-    const line = `${gutter}${wrapped[0] ?? ""}`
-    return selected
-      ? this.fillSelected(truncateToWidth(line, width, ""), width)
-      : truncateToWidth(line, width, "")
+    const contentWidth = Math.max(1, width - visibleWidth(gutter))
+    const wrapped = wrapTextWithAnsi(withSearch, contentWidth)
+    const contentLines = wrapped.length > 0 ? wrapped : [""]
+    return contentLines.map((contentLine, wrapIndex) => {
+      const line = `${wrapIndex === 0 ? gutter : " ".repeat(visibleWidth(gutter))}${RESET_FG}${contentLine}`
+      return this.renderDiffRowBackground(
+        truncateToWidth(line, width, ""),
+        width,
+        selected,
+        rowBg,
+      )
+    })
   }
 
   private renderDiffMarker(row: DiffRow, hasComment: boolean): string {
     const markerKind = diffRowMarkerKind(row, hasComment)
     if (markerKind === "comment") return this.theme.fg("warning", "●")
-    if (markerKind === "added") return this.theme.fg("success", "+")
-    if (markerKind === "removed") return this.theme.fg("error", "-")
+    if (markerKind === "added") return "+"
+    if (markerKind === "removed") return "-"
     if (markerKind === "hunk") return this.theme.fg("accent", "@")
     return " "
   }
@@ -999,15 +1011,49 @@ class GitDiffViewerComponent {
     )
   }
 
-  private decorateRow(file: GitChangedFile, row: DiffRow): string {
+  private decorateRow(
+    file: GitChangedFile,
+    rows: DiffRow[],
+    row: DiffRow,
+    rowIndex: number,
+    rowBg: string | undefined,
+  ): string {
     if (row.kind === "hunk") return this.theme.fg("accent", row.text)
     const highlighted =
-      row.kind === "file" || row.kind === "context" || row.kind === "added"
+      row.kind === "file" ||
+      row.kind === "context" ||
+      row.kind === "added" ||
+      row.kind === "removed"
         ? (highlightForPath(row.text, file.path, this.theme)[0] ?? row.text)
         : row.text
-    if (row.kind === "added") return this.theme.fg("success", highlighted)
-    if (row.kind === "removed") return this.theme.fg("error", highlighted)
-    return highlighted
+    const ranges = deltaIntralineRanges(rows, row, rowIndex)
+    const highlightBg = this.diffIntralineBg(row)
+    return ranges.length > 0 && highlightBg && rowBg
+      ? decorateVisibleRanges(highlighted, ranges, highlightBg, rowBg)
+      : highlighted
+  }
+
+  private diffIntralineBg(row: DiffRow): string | undefined {
+    if (row.kind === "added") return diffAddedHighlightBg(this.theme)
+    if (row.kind === "removed") return diffRemovedHighlightBg(this.theme)
+    return undefined
+  }
+
+  private diffRowBg(row: DiffRow): string | undefined {
+    if (row.kind === "added") return diffAddedBg(this.theme)
+    if (row.kind === "removed") return diffRemovedBg(this.theme)
+    return undefined
+  }
+
+  private renderDiffRowBackground(
+    line: string,
+    width: number,
+    selected: boolean,
+    rowBg: string | undefined,
+  ): string {
+    if (selected) return this.fillSelected(line, width)
+    const padded = `${line}${" ".repeat(Math.max(0, width - visibleWidth(line)))}`
+    return rowBg ? `${rowBg}${padded}${RESET_BG}` : padded
   }
 
   private moveSearch(direction: 1 | -1, includeCurrent = false): void {
@@ -1043,6 +1089,41 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
+function decorateVisibleRanges(
+  content: string,
+  ranges: Array<{ start: number; end: number }>,
+  highlightBg: string,
+  restoreBg: string,
+): string {
+  let rangeIndex = 0
+  let visibleIndex = 0
+  let output = ""
+
+  for (let index = 0; index < content.length; index++) {
+    if (content[index] === ESC) {
+      const sequenceEnd = content.indexOf("m", index)
+      if (sequenceEnd >= 0) {
+        output += content.slice(index, sequenceEnd + 1)
+        index = sequenceEnd
+        continue
+      }
+    }
+
+    const range = ranges[rangeIndex]
+    if (range && visibleIndex === range.start) output += highlightBg
+
+    output += content[index]
+    visibleIndex++
+
+    if (range && visibleIndex === range.end) {
+      output += restoreBg
+      rangeIndex++
+    }
+  }
+
+  return output
+}
+
 function statusColor(
   status: GitChangedFile["status"],
 ): "warning" | "success" | "error" | "accent" {
@@ -1053,4 +1134,25 @@ function statusColor(
 }
 
 const ESC = String.fromCharCode(27)
+const RESET_FG = `${ESC}[39m`
 const RESET_BG = `${ESC}[49m`
+
+function diffAddedBg(theme: Theme): string {
+  if (theme.getColorMode() === "truecolor") return `${ESC}[48;2;0;58;32m`
+  return `${ESC}[48;5;22m`
+}
+
+function diffRemovedBg(theme: Theme): string {
+  if (theme.getColorMode() === "truecolor") return `${ESC}[48;2;79;23;27m`
+  return `${ESC}[48;5;52m`
+}
+
+function diffAddedHighlightBg(theme: Theme): string {
+  if (theme.getColorMode() === "truecolor") return `${ESC}[48;2;0;92;50m`
+  return `${ESC}[48;5;28m`
+}
+
+function diffRemovedHighlightBg(theme: Theme): string {
+  if (theme.getColorMode() === "truecolor") return `${ESC}[48;2;112;31;36m`
+  return `${ESC}[48;5;88m`
+}
