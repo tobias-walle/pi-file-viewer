@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import {
   addReviewFile,
+  batchReviewFileUpdates,
   clearReviewFiles,
   getReviewFile,
   getReviewFiles,
@@ -45,6 +46,36 @@ test("replaces existing files while preserving original creation time", () => {
   expect(getReviewFiles()).toEqual([
     expect.objectContaining({ id: "same", content: "updated", createdAt: 100 }),
   ])
+})
+
+test("skips no-op review file updates", () => {
+  let calls = 0
+
+  setReviewScope("no-op-update-test")
+  clearReviewFiles()
+  const unsubscribe = subscribeReviewFiles(() => calls++)
+
+  addReviewFile(reviewFile("same", 100))
+  addReviewFile(reviewFile("same", 200))
+
+  expect(calls).toBe(1)
+  unsubscribe()
+})
+
+test("batches review file notifications", () => {
+  let calls = 0
+
+  setReviewScope("batch-test")
+  clearReviewFiles()
+  const unsubscribe = subscribeReviewFiles(() => calls++)
+
+  batchReviewFileUpdates(() => {
+    addReviewFile(reviewFile("a", 1))
+    addReviewFile(reviewFile("b", 2))
+  })
+
+  expect(calls).toBe(1)
+  unsubscribe()
 })
 
 test("notifies only listeners in the active scope", () => {

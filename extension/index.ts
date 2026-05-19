@@ -23,6 +23,7 @@ import { openGitDiffViewer } from "./git-diff-viewer.js"
 import { resolvePath } from "./path.js"
 import {
   addReviewFile,
+  batchReviewFileUpdates,
   clearReviewFiles,
   getReviewFiles,
   setReviewScope,
@@ -31,6 +32,8 @@ import type { ReviewFile, ReviewFileStatus } from "./types.js"
 import { openFileViewer } from "./viewer.js"
 
 const MAX_VIEW_FILE_BYTES = 5 * 1024 * 1024
+const STREAMING_UPDATE_DELAY_MS = 100
+const streamingUpdatesByScope = new Map<string, StreamingUpdate>()
 
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
@@ -44,15 +47,9 @@ export default function (pi: ExtensionAPI) {
   })
 
   pi.on("message_update", async (event, ctx) => {
-    activateReviewScope(ctx)
     const message = getAssistantEventMessage(event.assistantMessageEvent)
     if (!message) return
-    await addReviewFilesFromAssistantMessage(
-      message,
-      getCurrentCwd(ctx),
-      Date.now(),
-      "streaming",
-    )
+    scheduleStreamingAssistantMessage(message, ctx)
   })
 
   pi.on("tool_call", async (event, ctx) => {
@@ -62,7 +59,6 @@ export default function (pi: ExtensionAPI) {
       toolName: event.toolName,
       input: event.input,
       details: undefined,
-      cwd: getCurrentCwd(ctx),
       createdAt: Date.now(),
       status: "streaming",
     })
@@ -72,12 +68,12 @@ export default function (pi: ExtensionAPI) {
     if (event.isError) return
 
     activateReviewScope(ctx)
+    flushStreamingAssistantMessage(getReviewScope(ctx))
     await addReviewFileFromToolInput({
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       input: event.input,
       details: event.details,
-      cwd: getCurrentCwd(ctx),
       createdAt: Date.now(),
       status: "complete",
     })
@@ -107,12 +103,13 @@ export default function (pi: ExtensionAPI) {
 
 async function reviewFile(ctx: ExtensionContext): Promise<void> {
   activateReviewScope(ctx)
+  flushStreamingAssistantMessage(getReviewScope(ctx))
   await rebuildReviewFiles(ctx)
   const files = getReviewFiles()
   const cwd = getCurrentCwd(ctx)
   const file = await selectReviewFile(ctx, files, cwd)
   if (!file) return
-  await openFileViewer(ctx, file)
+  await openFileViewer(ctx, await hydrateReviewFileForViewing(file, cwd))
 }
 
 function parseWriteInput(
@@ -149,13 +146,11 @@ function parseEditInput(
   return { path: input.path, edits }
 }
 
-function buildAllAddedLines(content: string): Map<number, "added"> {
-  const lineCount = countLogicalLines(content)
-  const lines = new Map<number, "added">()
-  for (let line = 1; line <= lineCount; line++) {
-    lines.set(line, "added")
-  }
-  return lines
+interface StreamingUpdate {
+  message: Record<string, unknown>
+  createdAt: number
+  timer: ReturnType<typeof setTimeout>
+  scope: string
 }
 
 interface ReviewToolInput {
@@ -163,20 +158,18 @@ interface ReviewToolInput {
   toolName: string
   input: Record<string, unknown>
   details: unknown
-  cwd: string
   createdAt: number
   status: ReviewFileStatus
 }
 
-async function addReviewFileFromToolInput({
+function addReviewFileFromToolInput({
   toolCallId,
   toolName,
   input,
   details,
-  cwd,
   createdAt,
   status,
-}: ReviewToolInput): Promise<void> {
+}: ReviewToolInput): void {
   if (toolName === "write") {
     const writeInput = parseWriteInput(input)
     if (!writeInput) return
@@ -186,8 +179,11 @@ async function addReviewFileFromToolInput({
       kind: "write",
       path: writeInput.path,
       content: writeInput.content,
-      changedLines: buildAllAddedLines(writeInput.content),
-      stats: { added: countLogicalLines(writeInput.content), removed: 0 },
+      changedLines: undefined,
+      stats:
+        status === "complete"
+          ? { added: countLogicalLines(writeInput.content), removed: 0 }
+          : undefined,
       status,
       createdAt,
     })
@@ -199,19 +195,16 @@ async function addReviewFileFromToolInput({
   const editInput = parseEditInput(input)
   if (!editInput) return
 
-  const content =
-    status === "complete"
-      ? ((await readCurrentFile(editInput.path, cwd)) ??
-        buildEditPreview(editInput))
-      : buildEditPreview(editInput)
-
   addReviewFile({
     id: toolCallId,
     kind: "edit",
     path: editInput.path,
-    content,
-    changedLines: buildEditLineKinds(editInput, parseEditDetails(details)),
-    stats: buildEditStats(editInput),
+    content: buildEditPreview(editInput),
+    changedLines:
+      status === "complete"
+        ? buildEditLineKinds(editInput, parseEditDetails(details))
+        : undefined,
+    stats: status === "complete" ? buildEditStats(editInput) : undefined,
     status,
     createdAt,
   })
@@ -234,11 +227,70 @@ function buildEditPreview(input: NormalizedEditInput): string {
   return input.edits.map((edit) => edit.newText).join("\n")
 }
 
+function scheduleStreamingAssistantMessage(
+  message: Record<string, unknown>,
+  ctx: ExtensionContext,
+): void {
+  const scope = getReviewScope(ctx)
+  const existing = streamingUpdatesByScope.get(scope)
+  if (existing) clearTimeout(existing.timer)
+
+  const update: StreamingUpdate = {
+    message,
+    createdAt: Date.now(),
+    scope,
+    timer: setTimeout(
+      () => flushStreamingAssistantMessage(scope),
+      STREAMING_UPDATE_DELAY_MS,
+    ),
+  }
+  streamingUpdatesByScope.set(scope, update)
+}
+
+function flushStreamingAssistantMessage(scope: string): void {
+  const update = streamingUpdatesByScope.get(scope)
+  if (!update) return
+
+  streamingUpdatesByScope.delete(scope)
+  clearTimeout(update.timer)
+  setReviewScope(update.scope)
+  addReviewFilesFromAssistantMessage(
+    update.message,
+    update.createdAt,
+    "streaming",
+  )
+}
+
+function addReviewFilesFromAssistantMessage(
+  message: Record<string, unknown>,
+  createdAt: number,
+  status: ReviewFileStatus,
+): void {
+  if (message.role !== "assistant") return
+  const content = message.content
+  if (!Array.isArray(content)) return
+
+  batchReviewFileUpdates(() => {
+    for (const contentItem of content) {
+      const toolCall = parseToolCallContent(contentItem)
+      if (!toolCall) continue
+
+      addReviewFileFromToolInput({
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        input: toolCall.arguments,
+        details: undefined,
+        createdAt,
+        status,
+      })
+    }
+  })
+}
+
 async function rebuildReviewFiles(ctx: ExtensionContext): Promise<void> {
   activateReviewScope(ctx)
   const liveFiles = getReviewFiles()
-  const cwd = getCurrentCwd(ctx)
-  clearReviewFiles()
+  const reviewFiles: ReviewToolInput[] = []
 
   const toolCalls = new Map<string, ToolCallRecord>()
   for (const entry of getHistoryEntries(ctx)) {
@@ -246,10 +298,16 @@ async function rebuildReviewFiles(ctx: ExtensionContext): Promise<void> {
     if (!message) continue
 
     collectToolCalls(message, toolCalls)
-    await maybeAddToolResultReviewFile(message, toolCalls, cwd, entry)
+    collectToolResultReviewFile(message, toolCalls, entry, reviewFiles)
   }
 
-  preserveLiveFiles(liveFiles)
+  batchReviewFileUpdates(() => {
+    clearReviewFiles()
+    for (const reviewFile of reviewFiles) {
+      addReviewFileFromToolInput(reviewFile)
+    }
+    preserveLiveFiles(liveFiles)
+  })
 }
 
 function preserveLiveFiles(liveFiles: ReviewFile[]): void {
@@ -277,31 +335,6 @@ function getEntryMessage(entry: unknown): Record<string, unknown> | undefined {
   return asRecord(record.message)
 }
 
-async function addReviewFilesFromAssistantMessage(
-  message: Record<string, unknown>,
-  cwd: string,
-  createdAt: number,
-  status: ReviewFileStatus,
-): Promise<void> {
-  if (message.role !== "assistant") return
-  if (!Array.isArray(message.content)) return
-
-  for (const contentItem of message.content) {
-    const toolCall = parseToolCallContent(contentItem)
-    if (!toolCall) continue
-
-    await addReviewFileFromToolInput({
-      toolCallId: toolCall.id,
-      toolName: toolCall.name,
-      input: toolCall.arguments,
-      details: undefined,
-      cwd,
-      createdAt,
-      status,
-    })
-  }
-}
-
 function collectToolCalls(
   message: Record<string, unknown>,
   toolCalls: Map<string, ToolCallRecord>,
@@ -316,12 +349,12 @@ function collectToolCalls(
   }
 }
 
-async function maybeAddToolResultReviewFile(
+function collectToolResultReviewFile(
   message: Record<string, unknown>,
   toolCalls: Map<string, ToolCallRecord>,
-  cwd: string,
   entry: unknown,
-): Promise<void> {
+  reviewFiles: ReviewToolInput[],
+): void {
   if (message.role !== "toolResult") return
   if (typeof message.toolCallId !== "string") return
   if (message.isError === true) return
@@ -329,15 +362,24 @@ async function maybeAddToolResultReviewFile(
   const toolCall = toolCalls.get(message.toolCallId)
   if (!toolCall) return
 
-  await addReviewFileFromToolInput({
+  reviewFiles.push({
     toolCallId: message.toolCallId,
     toolName: toolCall.name,
     input: toolCall.arguments,
     details: message.details,
-    cwd,
     createdAt: getEntryTimestamp(entry),
     status: "complete",
   })
+}
+
+async function hydrateReviewFileForViewing(
+  file: ReviewFile,
+  cwd: string,
+): Promise<ReviewFile> {
+  if (file.kind !== "edit" || file.status !== "complete") return file
+
+  const content = await readCurrentFile(file.path, cwd)
+  return content === undefined ? file : { ...file, content }
 }
 
 async function readCurrentFile(

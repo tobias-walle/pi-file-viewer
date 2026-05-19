@@ -79,6 +79,11 @@ function buildLineKindsFromDiff(
 
 export function countLogicalLines(text: string): number {
   if (text.length === 0) return 0
-  const lineCount = text.split("\n").length
+
+  let lineCount = 1
+  for (let index = 0; index < text.length; index++) {
+    if (text.charCodeAt(index) === 10) lineCount++
+  }
+
   return text.endsWith("\n") ? Math.max(1, lineCount - 1) : lineCount
 }

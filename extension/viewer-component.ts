@@ -241,7 +241,7 @@ export class FileViewerComponent implements Focusable {
   ): string[] {
     const isSelected = lineNumber === this.selectedLine
     const hasComment = this.comments.has(lineNumber)
-    const lineKind = this.file.changedLines?.get(lineNumber)
+    const lineKind = this.getLineKind(lineNumber)
     const cursor = isSelected ? this.theme.fg("accent", ">") : " "
     const marker = this.renderLineMarker(lineKind, hasComment)
     const lineNumberText = String(lineNumber).padStart(numberWidth)
@@ -270,6 +270,13 @@ export class FileViewerComponent implements Focusable {
     if (!isSelected) return renderedLines
 
     return renderedLines.map((line) => fillSelected(this.theme, line, width))
+  }
+
+  private getLineKind(lineNumber: number): ReviewLineKind | undefined {
+    return (
+      this.file.changedLines?.get(lineNumber) ??
+      (this.file.kind === "write" ? "added" : undefined)
+    )
   }
 
   private renderLineMarker(

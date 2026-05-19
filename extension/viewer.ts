@@ -4,6 +4,8 @@ import { getReviewFile, subscribeReviewFiles } from "./registry.js"
 import type { FileViewerResult, ReviewFile } from "./types.js"
 import { FileViewerComponent } from "./viewer-component.js"
 
+const OPEN_STREAMING_UPDATE_DELAY_MS = 100
+
 const OVERLAY_OPTIONS = {
   overlay: true as const,
   overlayOptions: {
@@ -31,11 +33,37 @@ export async function openFileViewer(
         onClose: done,
         onRequestRender: () => tui.requestRender(),
       })
+      let pendingFile: ReviewFile | undefined
+      let updateTimer: ReturnType<typeof setTimeout> | undefined
+      const applyFileUpdate = (latestFile: ReviewFile) => {
+        component.updateFile(latestFile)
+        tui.requestRender()
+      }
+      const flushPendingUpdate = () => {
+        updateTimer = undefined
+        const latestFile = pendingFile
+        pendingFile = undefined
+        if (latestFile) applyFileUpdate(latestFile)
+      }
       const unsubscribe = subscribeReviewFiles(() => {
         const latestFile = getReviewFile(file.id)
         if (!latestFile) return
-        component.updateFile(latestFile)
-        tui.requestRender()
+
+        if (latestFile.status !== "streaming") {
+          if (updateTimer) clearTimeout(updateTimer)
+          updateTimer = undefined
+          pendingFile = undefined
+          applyFileUpdate(latestFile)
+          return
+        }
+
+        pendingFile = latestFile
+        if (!updateTimer) {
+          updateTimer = setTimeout(
+            flushPendingUpdate,
+            OPEN_STREAMING_UPDATE_DELAY_MS,
+          )
+        }
       })
 
       return {
@@ -46,7 +74,10 @@ export async function openFileViewer(
           component.handleInput(data)
           tui.requestRender()
         },
-        dispose: unsubscribe,
+        dispose: () => {
+          if (updateTimer) clearTimeout(updateTimer)
+          unsubscribe()
+        },
       }
     },
     OVERLAY_OPTIONS,
