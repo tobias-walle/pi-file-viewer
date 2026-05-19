@@ -532,10 +532,7 @@ class GitDiffViewerComponent {
     else if (action.type === "clearFilter") this.overviewBuffer.clearSearch()
     else if (action.type === "focusViewer") this.focus = "viewer"
     else if (action.type === "moveViewerPage")
-      this.moveViewerCentered(
-        this.viewerLine + action.delta,
-        this.currentRows(),
-      )
+      this.scrollViewerPage(action.delta, this.currentRows())
     else if (action.type === "startFilter") this.startFilter()
     else if (action.type === "moveOverviewSearch")
       this.moveOverviewSearch(action.delta)
@@ -567,7 +564,7 @@ class GitDiffViewerComponent {
     else if (action.type === "moveViewer")
       this.moveViewer(this.viewerLine + action.delta, rows)
     else if (action.type === "moveViewerPage")
-      this.moveViewerCentered(this.viewerLine + action.delta, rows)
+      this.scrollViewerPage(action.delta, rows)
     else if (action.type === "moveViewerAbsolute")
       this.moveViewer(action.line, rows)
     else if (action.type === "startSearch") this.startSearch()
@@ -678,6 +675,48 @@ class GitDiffViewerComponent {
     this.viewerBuffer.setLines(this.buildViewerLines(rows))
     this.viewerBuffer.moveTo(line - 1)
     this.viewerBuffer.center(this.viewerHeight())
+  }
+
+  private scrollViewerPage(delta: number, rows: DiffRow[]): void {
+    if (rows.length === 0) return
+
+    this.clearViewerLineAnchor()
+    this.viewerBuffer.setLines(this.buildViewerLines(rows))
+
+    const viewportHeight = this.viewerHeight()
+    const currentTopRow = this.viewerScroll
+    const nextTopRow = this.clampedViewerScroll(
+      currentTopRow + delta,
+      rows.length,
+      viewportHeight,
+    )
+    const cursorScreenRow = this.cursorScreenRow(
+      currentTopRow,
+      rows.length,
+      viewportHeight,
+    )
+
+    this.viewerScroll = nextTopRow
+    this.viewerLine = nextTopRow + cursorScreenRow + 1
+  }
+
+  private clampedViewerScroll(
+    scroll: number,
+    rowCount: number,
+    viewportHeight: number,
+  ): number {
+    const maxScroll = Math.max(0, rowCount - viewportHeight)
+    return clamp(scroll, 0, maxScroll)
+  }
+
+  private cursorScreenRow(
+    topRow: number,
+    rowCount: number,
+    viewportHeight: number,
+  ): number {
+    const cursorRow = this.viewerBuffer.cursorIndex - topRow
+    const lastVisibleRow = Math.max(0, Math.min(viewportHeight, rowCount) - 1)
+    return clamp(cursorRow, 0, lastVisibleRow)
   }
 
   private moveOverviewSearch(direction: 1 | -1, includeCurrent = false): void {
@@ -1006,6 +1045,10 @@ function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
     if (item !== undefined && predicate(item)) return index
   }
   return -1
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
 }
 
 function statusColor(
