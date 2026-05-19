@@ -16,7 +16,6 @@ export type OverviewAction =
 
 interface OverviewActionOptions {
   hasFilter: boolean
-  overviewHalf: number
   viewerHalf: number
   lastIndex: number
 }
@@ -50,14 +49,14 @@ const overviewActionResolvers: ActionResolver<
     action: () => ({ type: "focusViewer" }),
   },
   {
-    matches: (data) => matchesKey(data, "ctrl+d"),
+    matches: isPageDownKey,
     action: (options) => ({
       type: "moveViewerPage",
       delta: options.viewerHalf,
     }),
   },
   {
-    matches: (data) => matchesKey(data, "ctrl+u"),
+    matches: isPageUpKey,
     action: (options) => ({
       type: "moveViewerPage",
       delta: -options.viewerHalf,
@@ -74,14 +73,7 @@ const overviewActionResolvers: ActionResolver<
   },
   { matches: isUpKey, action: () => ({ type: "selectFile", delta: -1 }) },
   { matches: isDownKey, action: () => ({ type: "selectFile", delta: 1 }) },
-  {
-    matches: (data) => data === "u",
-    action: (options) => ({ type: "selectFile", delta: -options.overviewHalf }),
-  },
-  {
-    matches: (data) => data === "d",
-    action: (options) => ({ type: "selectFile", delta: options.overviewHalf }),
-  },
+
   {
     matches: (data) => data === "g",
     action: () => ({ type: "selectFileAbsolute", index: 0 }),

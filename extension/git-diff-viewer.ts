@@ -508,8 +508,8 @@ class GitDiffViewerComponent {
     const toggleHint = this.viewMode === "diff" ? "v file" : "v diff"
     const help =
       this.focus === "viewer"
-        ? ` j/k move  tab next  shift-tab prev  / search  ${toggleHint}  c comment  q close `
-        : " j/k move  C-d/C-u scroll viewer  / search  n/N next/prev  enter focus viewer  q close "
+        ? ` j/k move  d/u half page  g/G top/bottom  tab next  shift-tab prev  / search  ${toggleHint}  c comment  q close `
+        : " j/k files  d/u scroll viewer  / filter  n/N next/prev  enter focus viewer  q close "
     return [this.theme.fg("dim", help)]
   }
 
@@ -517,7 +517,6 @@ class GitDiffViewerComponent {
     const files = this.filteredFiles()
     const action = resolveOverviewAction(data, {
       hasFilter: this.overviewBuffer.hasSearch(),
-      overviewHalf: Math.max(1, Math.floor(this.overviewHeight() / 2)),
       viewerHalf: Math.max(1, Math.floor(this.viewerHeight() / 2)),
       lastIndex: files.length - 1,
     })
@@ -668,13 +667,6 @@ class GitDiffViewerComponent {
     this.viewerBuffer.setLines(this.buildViewerLines(rows))
     this.viewerBuffer.moveTo(line - 1)
     this.viewerBuffer.ensureVisible(this.viewerHeight())
-  }
-
-  private moveViewerCentered(line: number, rows: DiffRow[]): void {
-    this.clearViewerLineAnchor()
-    this.viewerBuffer.setLines(this.buildViewerLines(rows))
-    this.viewerBuffer.moveTo(line - 1)
-    this.viewerBuffer.center(this.viewerHeight())
   }
 
   private scrollViewerPage(delta: number, rows: DiffRow[]): void {

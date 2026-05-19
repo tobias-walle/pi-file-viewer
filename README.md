@@ -39,8 +39,8 @@ cp -R pi-file-viewer/extension ~/.pi/agent/extensions/file-viewer
 
 Diff viewer keys:
 
-- Overview focus: `j` / `k`, arrows, `d` / `u`, `g` / `G` move through files
-- Overview focus: `C-d` / `C-u` scrolls the bottom viewer without changing files
+- Overview focus: `j` / `k`, arrows, `g` / `G` move through files
+- Overview focus: `d` / `u`, `C-d` / `C-u` scrolls the bottom viewer without changing files
 - Overview focus: `/` searches by path, status, or stats, `n` / `N` jumps between matches, `enter` focuses the viewer
 - Viewer focus: `j` / `k`, arrows, `d` / `u`, `g` / `G` move through the current diff or file
 - Viewer focus: `tab` / `shift-tab` changes files
