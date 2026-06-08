@@ -8,7 +8,8 @@ test("formats review comments sorted by line", () => {
         id: "file",
         kind: "file",
         path: "src/file.ts",
-        content: "",
+        content:
+          "first\nconst earlier = 1\nthird\nfourth\nfifth\nsixth\nseventh\neighth\nninth\nconst later = 2",
         createdAt: 1,
       },
       [
@@ -18,7 +19,12 @@ test("formats review comments sorted by line", () => {
     ),
   ).toBe(
     "Review comments for `src/file.ts`:\n\n" +
-      "- `src/file.ts:2`: Earlier\n" +
-      "- `src/file.ts:10`: Later\n",
+      "- File: `src/file.ts:2`\n" +
+      "  Snippet: `const earlier = 1`\n" +
+      "  Comment: Earlier\n" +
+      "\n" +
+      "- File: `src/file.ts:10`\n" +
+      "  Snippet: `const later = 2`\n" +
+      "  Comment: Later\n",
   )
 })

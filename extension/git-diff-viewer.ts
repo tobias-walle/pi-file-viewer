@@ -219,6 +219,7 @@ class GitDiffViewerComponent {
     | undefined
   private requestId = 0
   private comments = new CommentStore<string>()
+  private commentLineContent = new Map<string, string>()
   private cached?: { width: number; lines: string[] }
   private spinner?: NodeJS.Timeout
 
@@ -1007,8 +1008,16 @@ class GitDiffViewerComponent {
     if (!file || !row) return
     const key = this.commentKey(file, row)
     this.comments.save(key, value)
+    if (value.trim()) this.commentLineContent.set(key, this.commentLine(row))
+    else this.commentLineContent.delete(key)
     this.inputMode = "normal"
     this.commentPrompt.stop()
+  }
+
+  private commentLine(row: DiffRow): string {
+    if (row.kind === "added") return `+${row.text}`
+    if (row.kind === "removed") return `-${row.text}`
+    return row.text
   }
 
   private cancelComment(): void {
@@ -1018,10 +1027,14 @@ class GitDiffViewerComponent {
   private removeComment(): void {
     const file = this.currentFile()
     const row = this.currentRows()[this.viewerLine - 1]
-    if (file && row) this.comments.delete(this.commentKey(file, row))
+    if (!file || !row) return
+    const key = this.commentKey(file, row)
+    this.comments.delete(key)
+    this.commentLineContent.delete(key)
   }
   private clearComments(): void {
     this.comments.clear()
+    this.commentLineContent.clear()
   }
 
   private commentKey(file: GitChangedFile, row: DiffRow): string {
@@ -1041,7 +1054,11 @@ class GitDiffViewerComponent {
 
   private getComments(): GitDiffComment[] {
     const files = this.state.status === "loaded" ? this.state.files : []
-    return buildGitDiffComments(files, this.comments.asReadonlyMap())
+    return buildGitDiffComments(
+      files,
+      this.comments.asReadonlyMap(),
+      this.commentLineContent,
+    )
   }
 
   private close(): void {

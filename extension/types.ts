@@ -71,6 +71,7 @@ export interface GitDiffComment {
   path: string
   line?: number
   removed?: boolean
+  lineContent?: string
   text: string
   order: number
 }

@@ -238,19 +238,27 @@ export function diffRowLineNumbers(
 export function buildGitDiffComments(
   files: GitChangedFile[],
   comments: ReadonlyMap<string, string>,
+  lineContent = new Map<string, string>(),
 ): GitDiffComment[] {
-  return files.flatMap((file) => commentsForFile(file, comments))
+  return files.flatMap((file) => commentsForFile(file, comments, lineContent))
 }
 
 function commentsForFile(
   file: GitChangedFile,
   comments: ReadonlyMap<string, string>,
+  lineContent: ReadonlyMap<string, string>,
 ): GitDiffComment[] {
   const output: GitDiffComment[] = []
   for (const [key, text] of comments) {
     const parsed = parseCommentKey(file, key)
     if (!parsed) continue
-    output.push({ fileId: file.id, path: file.path, text, ...parsed })
+    output.push({
+      fileId: file.id,
+      path: file.path,
+      lineContent: lineContent.get(key),
+      text,
+      ...parsed,
+    })
   }
   return output
 }

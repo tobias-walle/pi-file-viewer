@@ -1,3 +1,4 @@
+import { formatCommentBlock } from "./comment-format.js"
 import type { GitChangedFile, GitDiffComment } from "./types.js"
 
 export function formatGitDiffComments(
@@ -18,7 +19,11 @@ export function formatGitDiffComments(
     const location = comment.line
       ? `${comment.path}:${comment.line}${comment.removed ? " (removed)" : ""}`
       : `${comment.path}:file`
-    lines.push(`- \`${location}\`: ${comment.text}`)
+    lines.push(
+      ...formatCommentBlock(location, comment.text, comment.lineContent),
+      "",
+    )
   }
+  if (sorted.length > 0) lines.pop()
   return `${lines.join("\n")}\n`
 }
