@@ -8,11 +8,18 @@ export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 export const MAX_GIT_DIFF_INLINE_BYTES = 1024 * 1024
 
 export type GitRepoDiscovery =
-  | { status: "ok"; root: string; base: string }
+  | { status: "ok"; root: string; base: string; baseLabel: string }
   | { status: "not-repo"; message: string }
+  | { status: "error"; message: string }
+
+export function parseGitDiffCompareRef(args: string): string | undefined {
+  const ref = args.trim()
+  return ref ? ref : undefined
+}
 
 export async function discoverGitRepository(
   cwd: string,
+  compareRef?: string,
 ): Promise<GitRepoDiscovery> {
   const rootResult = await gitMaybe(["rev-parse", "--show-toplevel"], cwd)
   if (rootResult.code !== 0) {
@@ -20,9 +27,29 @@ export async function discoverGitRepository(
   }
 
   const root = rootResult.stdout.trim()
+  if (compareRef) {
+    const treeResult = await gitMaybe(
+      ["rev-parse", "--verify", "--end-of-options", `${compareRef}^{tree}`],
+      root,
+    )
+    if (treeResult.code !== 0) {
+      return {
+        status: "error",
+        message: `Invalid git ref "${compareRef}"`,
+      }
+    }
+    return {
+      status: "ok",
+      root,
+      base: treeResult.stdout.trim(),
+      baseLabel: compareRef,
+    }
+  }
+
   const headResult = await gitMaybe(["rev-parse", "--verify", "HEAD"], root)
   const base = headResult.code === 0 ? headResult.stdout.trim() : EMPTY_TREE
-  return { status: "ok", root, base }
+  const baseLabel = headResult.code === 0 ? "HEAD" : "empty tree"
+  return { status: "ok", root, base, baseLabel }
 }
 
 export async function loadGitChangedFiles(

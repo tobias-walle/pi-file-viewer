@@ -137,7 +137,13 @@ type TopState =
   | { status: "loading" }
   | { status: "not-repo"; message: string }
   | { status: "error"; message: string }
-  | { status: "loaded"; root: string; base: string; files: GitChangedFile[] }
+  | {
+      status: "loaded"
+      root: string
+      base: string
+      baseLabel: string
+      files: GitChangedFile[]
+    }
 
 interface PreparedDiffRows {
   viewerLines: BufferLine<DiffRow>[]
@@ -148,11 +154,13 @@ interface PreparedDiffRows {
 
 export async function openGitDiffViewer(
   ctx: ExtensionContext,
+  compareRef?: string,
 ): Promise<GitDiffViewerResult> {
   const result = await ctx.ui.custom<GitDiffViewerResult>(
     (tui, theme, _kb, done) => {
       const component = new GitDiffViewerComponent({
         cwd: ctx.sessionManager.getCwd() || ctx.cwd,
+        compareRef,
         theme,
         terminalRows: tui.terminal.rows,
         onClose: done,
@@ -185,6 +193,7 @@ let lastFilesForFormatting: GitChangedFile[] = []
 
 interface Options {
   cwd: string
+  compareRef?: string
   theme: Theme
   terminalRows: number
   onClose: (result: GitDiffViewerResult) => void
@@ -334,9 +343,12 @@ class GitDiffViewerComponent {
 
   private async loadOverview(): Promise<void> {
     this.startSpinner()
-    const discovery = await discoverGitRepository(this.options.cwd)
+    const discovery = await discoverGitRepository(
+      this.options.cwd,
+      this.options.compareRef,
+    )
     if (discovery.status !== "ok") {
-      this.state = { status: "not-repo", message: discovery.message }
+      this.state = { status: discovery.status, message: discovery.message }
       this.stopSpinner()
       return this.requestRender()
     }
@@ -346,6 +358,7 @@ class GitDiffViewerComponent {
         status: "loaded",
         root: discovery.root,
         base: discovery.base,
+        baseLabel: discovery.baseLabel,
         files,
       }
       this.overviewBuffer.setLines(this.buildOverviewLines(files))
@@ -364,6 +377,11 @@ class GitDiffViewerComponent {
     }
   }
 
+  private compareLabel(): string {
+    if (this.state.status === "loaded") return this.state.baseLabel
+    return this.options.compareRef ?? "HEAD"
+  }
+
   private renderContent(width: number, height: number): string[] {
     if (this.state.status !== "loaded")
       return this.renderStateCard(
@@ -376,7 +394,7 @@ class GitDiffViewerComponent {
             ? "Unable to load git changes"
             : "Loading git changes",
         this.state.status === "loading"
-          ? "Please wait while uncommitted changes are loaded."
+          ? `Please wait while changes compared with ${this.compareLabel()} are loaded.`
           : this.state.message,
       )
     if (this.state.files.length === 0)
@@ -385,7 +403,7 @@ class GitDiffViewerComponent {
         height,
         "Git changes",
         "Working tree clean",
-        "No uncommitted changes found in this repository.",
+        `No changes found compared with ${this.compareLabel()}.`,
       )
 
     return [...this.renderOverview(width), ...this.renderViewer(width)]
@@ -416,7 +434,10 @@ class GitDiffViewerComponent {
     const files = this.filteredFiles()
     const lines = [
       this.borderLine(width),
-      this.renderHeader("Git changes", `${files.length} files`),
+      this.renderHeader(
+        "Git changes",
+        `${files.length} files vs ${this.compareLabel()}`,
+      ),
       this.separatorLine(width),
     ]
     const bodyHeight = this.layout().overviewBodyHeight

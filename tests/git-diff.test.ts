@@ -2,9 +2,17 @@ import { expect, test } from "bun:test"
 import {
   applyNumstat,
   isGitBinaryDiff,
+  parseGitDiffCompareRef,
   parseNameStatus,
   parseUnifiedDiff,
 } from "../extension/git-diff.js"
+
+test("parses view-diff compare ref argument", () => {
+  expect(parseGitDiffCompareRef("")).toBeUndefined()
+  expect(parseGitDiffCompareRef("   ")).toBeUndefined()
+  expect(parseGitDiffCompareRef(" main ")).toBe("main")
+  expect(parseGitDiffCompareRef("origin/main")).toBe("origin/main")
+})
 
 test("parses git name status including renames", () => {
   const files = parseNameStatus(

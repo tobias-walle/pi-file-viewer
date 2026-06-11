@@ -35,6 +35,7 @@ cp -R pi-file-viewer/extension ~/.pi/agent/extensions/file-viewer
 
 - Run `/view-file` to select a file to view.
 - Run `/view-diff` to review everything that would be included by `git add -A`.
+- Run `/view-diff <ref>` to review changes compared with a git ref, for example `/view-diff main`.
 - Press `Alt+W` to open the file picker from the keyboard.
 
 Diff viewer keys:

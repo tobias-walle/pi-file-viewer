@@ -19,6 +19,7 @@ import {
   countLogicalLines,
   type NormalizedEditInput,
 } from "./diff.js"
+import { parseGitDiffCompareRef } from "./git-diff.js"
 import { openGitDiffViewer } from "./git-diff-viewer.js"
 import { resolvePath } from "./path.js"
 import {
@@ -87,9 +88,9 @@ export default function (pi: ExtensionAPI) {
   })
 
   pi.registerCommand("view-diff", {
-    description: "Review uncommitted git changes",
-    handler: async (_args, ctx) => {
-      await openGitDiffViewer(ctx)
+    description: "Review git changes, optionally compared against a ref",
+    handler: async (args, ctx) => {
+      await openGitDiffViewer(ctx, parseGitDiffCompareRef(args))
     },
   })
 
