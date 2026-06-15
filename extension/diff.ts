@@ -1,4 +1,3 @@
-import type { EditToolDetails } from "@mariozechner/pi-coding-agent"
 import type { ReviewLineKind } from "./types.js"
 
 export interface EditReplacement {
@@ -11,9 +10,14 @@ export interface NormalizedEditInput {
   edits: EditReplacement[]
 }
 
+export interface EditDetails {
+  diff: string
+  firstChangedLine?: number
+}
+
 export function buildEditLineKinds(
   input: NormalizedEditInput,
-  details: EditToolDetails | undefined,
+  details: EditDetails | undefined,
 ): Map<number, ReviewLineKind> | undefined {
   const fromDiff = buildLineKindsFromDiff(details?.diff)
   if (fromDiff?.size) return fromDiff

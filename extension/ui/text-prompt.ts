@@ -1,4 +1,4 @@
-import { Input } from "@mariozechner/pi-tui"
+import { Input } from "@earendil-works/pi-tui"
 
 export class TextPrompt {
   readonly input = new Input()

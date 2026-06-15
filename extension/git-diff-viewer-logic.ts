@@ -1,4 +1,4 @@
-import { matchesKey } from "@mariozechner/pi-tui"
+import { matchesKey } from "@earendil-works/pi-tui"
 import type { DiffRow, GitChangedFile, GitDiffComment } from "./types.js"
 
 type SearchDelta = -1 | 1

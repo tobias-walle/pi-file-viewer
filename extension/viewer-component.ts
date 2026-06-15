@@ -1,12 +1,12 @@
-import { setText } from "@mariozechner/clipboard"
-import type { Theme } from "@mariozechner/pi-coding-agent"
+import type { Theme } from "@earendil-works/pi-coding-agent"
 import {
   type Focusable,
   matchesKey,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
-} from "@mariozechner/pi-tui"
+} from "@earendil-works/pi-tui"
+import { copyTextToClipboard } from "./clipboard.js"
 import { CommentStore } from "./comment-store.js"
 import { resolvePath } from "./path.js"
 import { decorateSearchMatches } from "./search.js"
@@ -402,7 +402,7 @@ export class FileViewerComponent implements Focusable {
 
   private copyCurrentPath(): void {
     const absolutePath = resolvePath(this.file.path, this.cwd)
-    void setText(absolutePath).then(
+    void copyTextToClipboard(absolutePath).then(
       () => {
         this.copyStatus = "Copied absolute path"
         this.invalidateAndRender()

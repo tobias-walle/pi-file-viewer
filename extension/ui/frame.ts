@@ -1,5 +1,5 @@
-import type { Theme } from "@mariozechner/pi-coding-agent"
-import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui"
+import type { Theme } from "@earendil-works/pi-coding-agent"
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 
 export function borderLine(theme: Theme, width: number): string {
   return theme.fg("border", "─".repeat(width))

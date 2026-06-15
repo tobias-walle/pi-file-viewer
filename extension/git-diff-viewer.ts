@@ -1,11 +1,11 @@
-import { setText } from "@mariozechner/clipboard"
-import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent"
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent"
 import {
   matchesKey,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
-} from "@mariozechner/pi-tui"
+} from "@earendil-works/pi-tui"
+import { copyTextToClipboard } from "./clipboard.js"
 import { CommentStore } from "./comment-store.js"
 import {
   buildDeltaIntralineRangeCache,
@@ -820,7 +820,7 @@ class GitDiffViewerComponent {
     if (!file || this.state.status !== "loaded") return
 
     const absolutePath = resolvePath(file.path, this.state.root)
-    void setText(absolutePath).then(
+    void copyTextToClipboard(absolutePath).then(
       () => {
         this.copyStatus = "Copied absolute path"
         this.invalidate()

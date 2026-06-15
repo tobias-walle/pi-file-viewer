@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent"
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
 import { formatReviewComments } from "./comments.js"
 import { getReviewFile, subscribeReviewFiles } from "./registry.js"
 import type { FileViewerResult, ReviewFile } from "./types.js"

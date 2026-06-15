@@ -1,4 +1,4 @@
-import { matchesKey } from "@mariozechner/pi-tui"
+import { matchesKey } from "@earendil-works/pi-tui"
 
 export function isQuit(data: string): boolean {
   return data === "q" || matchesKey(data, "ctrl+c")

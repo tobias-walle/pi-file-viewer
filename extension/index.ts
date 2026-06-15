@@ -1,22 +1,22 @@
 import { execFile } from "node:child_process"
 import { readFile, stat } from "node:fs/promises"
 import type {
-  EditToolDetails,
   ExtensionAPI,
   ExtensionContext,
   Theme,
   WriteToolInput,
-} from "@mariozechner/pi-coding-agent"
+} from "@earendil-works/pi-coding-agent"
 import {
   fuzzyFilter,
   Input,
   matchesKey,
   truncateToWidth,
-} from "@mariozechner/pi-tui"
+} from "@earendil-works/pi-tui"
 
 import {
   buildEditLineKinds,
   countLogicalLines,
+  type EditDetails,
   type NormalizedEditInput,
 } from "./diff.js"
 import { parseGitDiffCompareRef } from "./git-diff.js"
@@ -394,7 +394,7 @@ async function readCurrentFile(
   }
 }
 
-function parseEditDetails(details: unknown): EditToolDetails | undefined {
+function parseEditDetails(details: unknown): EditDetails | undefined {
   const record = asRecord(details)
   if (!record) return undefined
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { Theme } from "@mariozechner/pi-coding-agent"
+import type { Theme } from "@earendil-works/pi-coding-agent"
 import {
   highlightForPath,
   highlightMarkdown,

@@ -1,4 +1,4 @@
-import type { Theme } from "@mariozechner/pi-coding-agent"
+import type { Theme } from "@earendil-works/pi-coding-agent"
 
 const ESC = String.fromCharCode(27)
 const ANSI_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, "g")
