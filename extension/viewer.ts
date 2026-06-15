@@ -28,6 +28,7 @@ export async function openFileViewer(
       const initialDialogHeight = getDialogHeight(tui.terminal.rows)
       const component = new FileViewerComponent({
         file,
+        cwd: ctx.sessionManager.getCwd() || ctx.cwd,
         theme,
         visibleHeight: Math.max(5, initialDialogHeight - 7),
         onClose: done,

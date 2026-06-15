@@ -30,6 +30,9 @@
       "./extension/index.ts"
     ]
   },
+  "dependencies": {
+    "@mariozechner/clipboard": "^0.3.5"
+  },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*"

@@ -47,6 +47,7 @@ Diff viewer keys:
 - Viewer focus: `tab` / `shift-tab` changes files
 - Viewer focus: `/` searches, `n` / `N` jumps between matches
 - Viewer focus: `v` toggles diff and final file content
+- `y` copies the current absolute path to the clipboard
 - Viewer focus: `enter` or `c` comments, `x` removes a comment, `C` clears all comments
 - `Esc` returns from the viewer to the overview, or closes filter/search inputs
 - `q` or `Ctrl+C` closes and pastes collected comments
@@ -58,6 +59,7 @@ File viewer keys:
 - `g` / `G`: top/bottom
 - `/`: search
 - `n` / `N`: next/previous search match
+- `y`: copy the absolute path to the clipboard
 - `enter` or `c`: add or edit a comment on the selected line
 - `x`: remove the selected line comment
 - `C`: clear all comments

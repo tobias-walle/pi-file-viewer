@@ -1,3 +1,4 @@
+import { setText } from "@mariozechner/clipboard"
 import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent"
 import {
   matchesKey,
@@ -24,6 +25,7 @@ import {
   resolveOverviewAction,
   resolveViewerAction,
 } from "./git-diff-viewer-logic.js"
+import { resolvePath } from "./path.js"
 import { decorateSearchMatches, stripAnsi } from "./search.js"
 import type {
   DiffRow,
@@ -229,6 +231,7 @@ class GitDiffViewerComponent {
   private requestId = 0
   private comments = new CommentStore<string>()
   private commentLineContent = new Map<string, string>()
+  private copyStatus = ""
   private cached?: { width: number; lines: string[] }
   private spinner?: NodeJS.Timeout
 
@@ -617,9 +620,14 @@ class GitDiffViewerComponent {
     const toggleHint = this.viewMode === "diff" ? "v file" : "v diff"
     const help =
       this.focus === "viewer"
-        ? ` j/k move  d/u half page  g/G top/bottom  tab next  shift-tab prev  / search  ${toggleHint}  c comment  q close `
-        : " j/k files  d/u scroll viewer  / filter  n/N next/prev  enter focus viewer  q close "
-    return [this.theme.fg("dim", help)]
+        ? ` j/k move  d/u half page  g/G top/bottom  tab next  shift-tab prev  / search  ${toggleHint}  y copy path  c comment  q close `
+        : " j/k files  d/u scroll viewer  / filter  n/N next/prev  y copy path  enter focus viewer  q close "
+    return [
+      this.theme.fg(
+        this.copyStatus ? "success" : "dim",
+        this.copyStatus || help,
+      ),
+    ]
   }
 
   private handleOverviewInput(data: string): void {
@@ -648,6 +656,7 @@ class GitDiffViewerComponent {
       this.selectFile(this.selectedFile + action.delta, files)
     else if (action.type === "selectFileAbsolute")
       this.selectFile(action.index, files)
+    else if (action.type === "copyPath") this.copyCurrentPath()
   }
 
   private handleViewerInput(data: string): void {
@@ -681,6 +690,7 @@ class GitDiffViewerComponent {
     else if (action.type === "startComment") this.startComment()
     else if (action.type === "removeComment") this.removeComment()
     else if (action.type === "clearComments") this.clearComments()
+    else if (action.type === "copyPath") this.copyCurrentPath()
   }
 
   private ensureCurrentLoaded(): void {
@@ -803,6 +813,25 @@ class GitDiffViewerComponent {
 
   private currentFile(): GitChangedFile | undefined {
     return this.filteredFiles()[this.selectedFile]
+  }
+
+  private copyCurrentPath(): void {
+    const file = this.currentFile()
+    if (!file || this.state.status !== "loaded") return
+
+    const absolutePath = resolvePath(file.path, this.state.root)
+    void setText(absolutePath).then(
+      () => {
+        this.copyStatus = "Copied absolute path"
+        this.invalidate()
+        this.requestRender()
+      },
+      () => {
+        this.copyStatus = "Failed to copy path"
+        this.invalidate()
+        this.requestRender()
+      },
+    )
   }
 
   private selectFile(index: number, files: GitChangedFile[]): void {

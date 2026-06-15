@@ -12,6 +12,7 @@ export type OverviewAction =
   | { type: "moveOverviewSearch"; delta: SearchDelta }
   | { type: "selectFile"; delta: number }
   | { type: "selectFileAbsolute"; index: number }
+  | { type: "copyPath" }
   | { type: "none" }
 
 interface OverviewActionOptions {
@@ -63,6 +64,7 @@ const overviewActionResolvers: ActionResolver<
     }),
   },
   { matches: (data) => data === "/", action: () => ({ type: "startFilter" }) },
+  { matches: (data) => data === "y", action: () => ({ type: "copyPath" }) },
   {
     matches: (data) => data === "n",
     action: () => ({ type: "moveOverviewSearch", delta: 1 }),
@@ -101,6 +103,7 @@ export type ViewerAction =
   | { type: "startComment" }
   | { type: "removeComment" }
   | { type: "clearComments" }
+  | { type: "copyPath" }
   | { type: "none" }
 
 interface ViewerActionOptions {
@@ -170,6 +173,7 @@ const viewerActionResolvers: ActionResolver<
     matches: (data) => data === "v",
     action: () => ({ type: "toggleViewMode" }),
   },
+  { matches: (data) => data === "y", action: () => ({ type: "copyPath" }) },
   { matches: isCommentKey, action: () => ({ type: "startComment" }) },
   {
     matches: (data) => data === "x",

@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "pi-file-viewer",
+      "dependencies": {
+        "@mariozechner/clipboard": "^0.3.5",
+      },
       "devDependencies": {
         "@biomejs/biome": "^2.4.14",
         "@mariozechner/pi-coding-agent": "^0.73.1",
@@ -13,8 +16,8 @@
         "typescript": "^6.0.3",
       },
       "peerDependencies": {
-        "@mariozechner/pi-coding-agent": "^0.62.0",
-        "@mariozechner/pi-tui": "^0.62.0",
+        "@mariozechner/pi-coding-agent": "*",
+        "@mariozechner/pi-tui": "*",
       },
     },
   },

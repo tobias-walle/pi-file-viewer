@@ -1,3 +1,4 @@
+import { setText } from "@mariozechner/clipboard"
 import type { Theme } from "@mariozechner/pi-coding-agent"
 import {
   type Focusable,
@@ -7,6 +8,7 @@ import {
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui"
 import { CommentStore } from "./comment-store.js"
+import { resolvePath } from "./path.js"
 import { decorateSearchMatches } from "./search.js"
 import type {
   FileViewerResult,
@@ -39,6 +41,7 @@ type Mode = "view" | "comment" | "search"
 
 interface FileViewerComponentOptions {
   file: ReviewFile
+  cwd: string
   theme: Theme
   visibleHeight: number
   onClose: (result: FileViewerResult) => void
@@ -47,6 +50,7 @@ interface FileViewerComponentOptions {
 
 export class FileViewerComponent implements Focusable {
   private file: ReviewFile
+  private cwd: string
   private theme: Theme
   private visibleHeight: number
   private onClose: (result: FileViewerResult) => void
@@ -66,6 +70,7 @@ export class FileViewerComponent implements Focusable {
     onCancel: () => this.cancelSearchInput(),
   })
   private searchQuery = ""
+  private copyStatus = ""
   private _focused = false
 
   get focused(): boolean {
@@ -80,6 +85,7 @@ export class FileViewerComponent implements Focusable {
 
   constructor(options: FileViewerComponentOptions) {
     this.file = options.file
+    this.cwd = options.cwd
     this.theme = options.theme
     this.visibleHeight = options.visibleHeight
     this.onClose = options.onClose
@@ -206,6 +212,7 @@ export class FileViewerComponent implements Focusable {
     else if (data === "N") this.moveToSearchMatch(-1)
     else if (data === "x") this.removeSelectedComment()
     else if (data === "C") this.clearComments()
+    else if (data === "y") this.copyCurrentPath()
   }
 
   private renderHeader(width: number): string {
@@ -320,17 +327,19 @@ export class FileViewerComponent implements Focusable {
 
     const position = `${this.selectedLine}/${this.lineCount()}`
     const help =
-      "j/k move · d/u half page · g/G top/bottom · / search · n/N next/prev · enter/c comment · x remove · C clear · q close"
+      "j/k move · d/u half page · g/G top/bottom · / search · n/N next/prev · y copy path · enter/c comment · x remove · C clear · q close"
     return [
       truncateToWidth(
         `${this.theme.fg("muted", position)} ${this.theme.fg("dim", help)}`,
         width,
         "",
       ),
-      this.theme.fg(
-        "dim",
-        "Markers: + added · ~ changed · - removed · ● comment",
-      ),
+      this.copyStatus
+        ? this.theme.fg("success", this.copyStatus)
+        : this.theme.fg(
+            "dim",
+            "Markers: + added · ~ changed · - removed · ● comment",
+          ),
     ]
   }
 
@@ -389,6 +398,20 @@ export class FileViewerComponent implements Focusable {
   private removeSelectedComment(): void {
     if (!this.comments.delete(this.selectedLine)) return
     this.invalidateAndRender()
+  }
+
+  private copyCurrentPath(): void {
+    const absolutePath = resolvePath(this.file.path, this.cwd)
+    void setText(absolutePath).then(
+      () => {
+        this.copyStatus = "Copied absolute path"
+        this.invalidateAndRender()
+      },
+      () => {
+        this.copyStatus = "Failed to copy path"
+        this.invalidateAndRender()
+      },
+    )
   }
 
   private clearComments(): void {
