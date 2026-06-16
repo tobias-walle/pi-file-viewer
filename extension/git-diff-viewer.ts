@@ -13,6 +13,7 @@ import {
 } from "./delta-intraline.js"
 import {
   discoverGitRepository,
+  type GitDiffViewOptions,
   loadGitChangedFiles,
   loadGitDiffRows,
   loadGitFileRows,
@@ -156,13 +157,14 @@ interface PreparedDiffRows {
 
 export async function openGitDiffViewer(
   ctx: ExtensionContext,
-  compareRef?: string,
+  options: GitDiffViewOptions = { scope: "all" },
 ): Promise<GitDiffViewerResult> {
   const result = await ctx.ui.custom<GitDiffViewerResult>(
     (tui, theme, _kb, done) => {
       const component = new GitDiffViewerComponent({
         cwd: ctx.sessionManager.getCwd() || ctx.cwd,
-        compareRef,
+        compareRef: options.compareRef,
+        scope: options.scope,
         theme,
         terminalRows: tui.terminal.rows,
         onClose: done,
@@ -196,6 +198,7 @@ let lastFilesForFormatting: GitChangedFile[] = []
 interface Options {
   cwd: string
   compareRef?: string
+  scope: GitDiffViewOptions["scope"]
   theme: Theme
   terminalRows: number
   onClose: (result: GitDiffViewerResult) => void
@@ -349,6 +352,7 @@ class GitDiffViewerComponent {
     const discovery = await discoverGitRepository(
       this.options.cwd,
       this.options.compareRef,
+      this.options.scope,
     )
     if (discovery.status !== "ok") {
       this.state = { status: discovery.status, message: discovery.message }
@@ -356,7 +360,11 @@ class GitDiffViewerComponent {
       return this.requestRender()
     }
     try {
-      const files = await loadGitChangedFiles(discovery.root, discovery.base)
+      const files = await loadGitChangedFiles(
+        discovery.root,
+        discovery.base,
+        this.options.scope,
+      )
       this.state = {
         status: "loaded",
         root: discovery.root,
@@ -382,6 +390,7 @@ class GitDiffViewerComponent {
 
   private compareLabel(): string {
     if (this.state.status === "loaded") return this.state.baseLabel
+    if (this.options.scope === "unstaged") return "index"
     return this.options.compareRef ?? "HEAD"
   }
 
@@ -702,7 +711,12 @@ class GitDiffViewerComponent {
     this.startSpinner()
     const loader = this.viewMode === "diff" ? loadGitDiffRows : loadGitFileRows
     if (this.state.status !== "loaded") return
-    void loader(file, this.state.root, this.state.base).then(
+    void loader(
+      file,
+      this.state.root,
+      this.state.base,
+      this.options.scope,
+    ).then(
       (result) => {
         if (requestId > this.requestId) return
         this.preparedRows(file, result.rows)

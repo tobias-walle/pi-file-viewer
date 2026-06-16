@@ -7,19 +7,40 @@ import type { DiffRow, GitChangedFile, GitDiffLoadResult } from "./types.js"
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 export const MAX_GIT_DIFF_INLINE_BYTES = 1024 * 1024
 
+export type GitDiffScope = "all" | "staged" | "unstaged"
+
+export interface GitDiffViewOptions {
+  compareRef?: string
+  scope: GitDiffScope
+}
+
 export type GitRepoDiscovery =
   | { status: "ok"; root: string; base: string; baseLabel: string }
   | { status: "not-repo"; message: string }
   | { status: "error"; message: string }
 
 export function parseGitDiffCompareRef(args: string): string | undefined {
-  const ref = args.trim()
-  return ref ? ref : undefined
+  return parseGitDiffViewArgs(args).compareRef
+}
+
+export function parseGitDiffViewArgs(args: string): GitDiffViewOptions {
+  const tokens = args.trim() ? args.trim().split(/\s+/) : []
+  let scope: GitDiffScope = "all"
+  const refs: string[] = []
+
+  for (const token of tokens) {
+    if (token === "--staged" || token === "-s") scope = "staged"
+    else if (token === "--unstaged" || token === "-u") scope = "unstaged"
+    else refs.push(token)
+  }
+
+  return { compareRef: refs.join(" ") || undefined, scope }
 }
 
 export async function discoverGitRepository(
   cwd: string,
   compareRef?: string,
+  scope: GitDiffScope = "all",
 ): Promise<GitRepoDiscovery> {
   const rootResult = await gitMaybe(["rev-parse", "--show-toplevel"], cwd)
   if (rootResult.code !== 0) {
@@ -27,7 +48,7 @@ export async function discoverGitRepository(
   }
 
   const root = rootResult.stdout.trim()
-  if (compareRef) {
+  if (compareRef && scope !== "unstaged") {
     const treeResult = await gitMaybe(
       ["rev-parse", "--verify", "--end-of-options", `${compareRef}^{tree}`],
       root,
@@ -48,18 +69,26 @@ export async function discoverGitRepository(
 
   const headResult = await gitMaybe(["rev-parse", "--verify", "HEAD"], root)
   const base = headResult.code === 0 ? headResult.stdout.trim() : EMPTY_TREE
-  const baseLabel = headResult.code === 0 ? "HEAD" : "empty tree"
+  const baseLabel =
+    scope === "unstaged"
+      ? "index"
+      : headResult.code === 0
+        ? "HEAD"
+        : "empty tree"
   return { status: "ok", root, base, baseLabel }
 }
 
 export async function loadGitChangedFiles(
   root: string,
   base: string,
+  scope: GitDiffScope = "all",
 ): Promise<GitChangedFile[]> {
   const [nameStatus, numstat, untracked] = await Promise.all([
-    git(["diff", "--name-status", "-M", base, "--"], root),
-    git(["diff", "--numstat", "-M", base, "--"], root),
-    git(["ls-files", "--others", "--exclude-standard", "-z"], root),
+    git(nameStatusArgs(base, scope), root),
+    git(numstatArgs(base, scope), root),
+    scope === "staged"
+      ? Promise.resolve("")
+      : git(["ls-files", "--others", "--exclude-standard", "-z"], root),
   ])
 
   const files = parseNameStatus(nameStatus)
@@ -78,6 +107,7 @@ export async function loadGitDiffRows(
   file: GitChangedFile,
   root: string,
   base: string,
+  scope: GitDiffScope = "all",
 ): Promise<GitDiffLoadResult> {
   if (file.large) return largeResult(file)
   if (file.binary) return binaryResult(file)
@@ -87,10 +117,7 @@ export async function loadGitDiffRows(
   }
 
   const pathspec = file.path
-  const diff = await git(
-    ["diff", "--binary", "--unified=3", "-M", base, "--", pathspec],
-    root,
-  )
+  const diff = await git(diffRowsArgs(base, scope, pathspec), root)
   if (isGitBinaryDiff(diff)) return binaryResult(file)
   const rows = parseUnifiedDiff(diff)
   return {
@@ -108,6 +135,7 @@ export async function loadGitFileRows(
   file: GitChangedFile,
   root: string,
   base: string,
+  scope: GitDiffScope = "all",
 ): Promise<GitDiffLoadResult> {
   if (file.large) return largeResult(file)
   if (file.binary) return binaryResult(file)
@@ -116,7 +144,9 @@ export async function loadGitFileRows(
     const content =
       file.status === "D"
         ? await git(["show", `${base}:${file.oldPath ?? file.path}`], root)
-        : await readFileWithLimit(join(root, file.path))
+        : scope === "staged"
+          ? await git(["show", `:${file.path}`], root)
+          : await readFileWithLimit(join(root, file.path))
     const rows = content.split("\n").map((text, index) => ({
       kind: "file" as const,
       text,
@@ -147,6 +177,41 @@ export async function loadGitFileRows(
       ),
     }
   }
+}
+
+function nameStatusArgs(base: string, scope: GitDiffScope): string[] {
+  if (scope === "unstaged") return ["diff", "--name-status", "-M", "--"]
+  if (scope === "staged")
+    return ["diff", "--cached", "--name-status", "-M", base, "--"]
+  return ["diff", "--name-status", "-M", base, "--"]
+}
+
+function numstatArgs(base: string, scope: GitDiffScope): string[] {
+  if (scope === "unstaged") return ["diff", "--numstat", "-M", "--"]
+  if (scope === "staged")
+    return ["diff", "--cached", "--numstat", "-M", base, "--"]
+  return ["diff", "--numstat", "-M", base, "--"]
+}
+
+function diffRowsArgs(
+  base: string,
+  scope: GitDiffScope,
+  pathspec: string,
+): string[] {
+  if (scope === "unstaged")
+    return ["diff", "--binary", "--unified=3", "-M", "--", pathspec]
+  if (scope === "staged")
+    return [
+      "diff",
+      "--cached",
+      "--binary",
+      "--unified=3",
+      "-M",
+      base,
+      "--",
+      pathspec,
+    ]
+  return ["diff", "--binary", "--unified=3", "-M", base, "--", pathspec]
 }
 
 export function parseNameStatus(output: string): GitChangedFile[] {

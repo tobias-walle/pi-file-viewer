@@ -35,6 +35,8 @@ cp -R pi-file-viewer/extension ~/.pi/agent/extensions/file-viewer
 
 - Run `/view-file` to select a file to view.
 - Run `/view-diff` to review everything that would be included by `git add -A`.
+- Run `/view-diff --unstaged` or `/view-diff -u` to review unstaged and untracked changes only.
+- Run `/view-diff --staged` or `/view-diff -s` to review staged changes only.
 - Run `/view-diff <ref>` to review changes compared with a git ref, for example `/view-diff main`.
 - Press `Alt+W` to open the file picker from the keyboard.
 

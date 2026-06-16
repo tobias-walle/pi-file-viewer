@@ -3,6 +3,7 @@ import {
   applyNumstat,
   isGitBinaryDiff,
   parseGitDiffCompareRef,
+  parseGitDiffViewArgs,
   parseNameStatus,
   parseUnifiedDiff,
 } from "../extension/git-diff.js"
@@ -12,6 +13,16 @@ test("parses view-diff compare ref argument", () => {
   expect(parseGitDiffCompareRef("   ")).toBeUndefined()
   expect(parseGitDiffCompareRef(" main ")).toBe("main")
   expect(parseGitDiffCompareRef("origin/main")).toBe("origin/main")
+})
+
+test("parses view-diff staged and unstaged flags", () => {
+  expect(parseGitDiffViewArgs("--staged")).toEqual({ scope: "staged" })
+  expect(parseGitDiffViewArgs("-s main")).toEqual({
+    compareRef: "main",
+    scope: "staged",
+  })
+  expect(parseGitDiffViewArgs("--unstaged")).toEqual({ scope: "unstaged" })
+  expect(parseGitDiffViewArgs("-u")).toEqual({ scope: "unstaged" })
 })
 
 test("parses git name status including renames", () => {

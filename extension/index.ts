@@ -19,7 +19,7 @@ import {
   type EditDetails,
   type NormalizedEditInput,
 } from "./diff.js"
-import { parseGitDiffCompareRef } from "./git-diff.js"
+import { parseGitDiffViewArgs } from "./git-diff.js"
 import { openGitDiffViewer } from "./git-diff-viewer.js"
 import { resolvePath } from "./path.js"
 import {
@@ -88,9 +88,9 @@ export default function (pi: ExtensionAPI) {
   })
 
   pi.registerCommand("view-diff", {
-    description: "Review git changes, optionally compared against a ref",
+    description: "Review git changes, optionally staged or unstaged only",
     handler: async (args, ctx) => {
-      await openGitDiffViewer(ctx, parseGitDiffCompareRef(args))
+      await openGitDiffViewer(ctx, parseGitDiffViewArgs(args))
     },
   })
 
