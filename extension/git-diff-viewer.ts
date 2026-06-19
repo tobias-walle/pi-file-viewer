@@ -1043,7 +1043,8 @@ class GitDiffViewerComponent {
   }
   private startSearch(): void {
     this.inputMode = "search"
-    this.searchPrompt.start(this.searchQuery)
+    this.searchQuery = ""
+    this.searchPrompt.start("")
   }
   private applySearch(value: string): void {
     this.searchQuery = value.trim()

@@ -354,7 +354,9 @@ export class FileViewerComponent implements Focusable {
 
   private startSearchInput(): void {
     this.mode = "search"
-    this.searchPrompt.start(this.searchQuery, this.focused)
+    this.searchQuery = ""
+    this.buffer.clearSearch()
+    this.searchPrompt.start("", this.focused)
     this.invalidateAndRender()
   }
 
