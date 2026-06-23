@@ -39,7 +39,23 @@ cp -R pi-file-viewer/extension ~/.pi/agent/extensions/file-viewer
 - Run `/view-diff --staged` or `/view-diff -s` to review staged changes only.
 - Run `/view-diff <ref>` to review changes compared with a git ref, for example `/view-diff main`.
 - Add `--guide` or `-g` to ask the current model to sort files into a review order and show a short review cue for each file, for example `/view-diff -g --staged`.
-- Press `Alt+W` to open the file picker from the keyboard.
+
+This extension does not install a global keyboard shortcut. To create your own, add a small personal extension such as `~/.pi/agent/extensions/file-viewer-shortcut.ts`:
+
+```ts
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+
+export default function (pi: ExtensionAPI) {
+  pi.registerShortcut("alt+w", {
+    description: "Prefill /view-file",
+    handler: (ctx) => {
+      ctx.ui.setEditorText("/view-file")
+    },
+  })
+}
+```
+
+Run `/reload`, press `Alt+W`, then press `Enter` to open the file picker. Change `alt+w` to any shortcut you prefer.
 
 ![Guided diff review showing ranked files and an inline review cue](assets/view-diff-guide.png)
 

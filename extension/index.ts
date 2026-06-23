@@ -117,12 +117,6 @@ export default function (pi: ExtensionAPI) {
     },
   })
 
-  pi.registerShortcut("alt+w", {
-    description: "Select write/edit tool call to view",
-    handler: async (ctx) => {
-      await reviewFile(ctx)
-    },
-  })
 }
 
 type GuideGenerationResult =
