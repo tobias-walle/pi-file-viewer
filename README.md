@@ -33,8 +33,8 @@ cp -R pi-file-viewer/extension ~/.pi/agent/extensions/file-viewer
 
 ## Usage
 
-- Run `/view-file` to select a file to view.
-- Run `/view-diff` to review everything that would be included by `git add -A`.
+- Run `/view-file` to select a file to view. If a file viewer is hidden, `/view-file` shows it again.
+- Run `/view-diff` to review everything that would be included by `git add -A`. If a diff viewer is hidden, `/view-diff` shows it again.
 - Run `/view-diff --unstaged` or `/view-diff -u` to review unstaged and untracked changes only.
 - Run `/view-diff --staged` or `/view-diff -s` to review staged changes only.
 - Run `/view-diff <ref>` to review changes compared with a git ref, for example `/view-diff main`.
@@ -51,10 +51,13 @@ Diff viewer keys:
 - Viewer focus: `v` toggles diff and final file content
 - `y` copies the current absolute path to the clipboard
 - Viewer focus: `enter` or `c` comments, `x` removes a comment, `C` clears all comments
+- `Alt+/` hides the viewer without losing state. Run `/view-diff` to show it again.
 - `Esc` returns from the viewer to the overview, or closes filter/search inputs
 - `q` or `Ctrl+C` closes and pastes collected comments
 
 File viewer keys:
+
+- `Alt+/` hides the viewer without losing state. Run `/view-file` to show it again.
 
 - `j` / `k` or arrow keys: move
 - `d` / `u`: half page down/up

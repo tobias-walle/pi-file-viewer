@@ -1,6 +1,7 @@
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent"
 import {
   matchesKey,
+  type OverlayHandle,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
@@ -43,6 +44,7 @@ import {
   separatorLine as renderSeparatorLine,
   shortenLeft,
 } from "./ui/frame.js"
+import { isHideViewer } from "./ui/keys.js"
 import { type BufferLine, LineBuffer } from "./ui/line-buffer.js"
 import { TextPrompt } from "./ui/text-prompt.js"
 import { highlightForPath } from "./utils/markdown-highlight.js"
@@ -54,6 +56,23 @@ const OVERLAY_OPTIONS = {
     maxHeight: "85%" as const,
     anchor: "bottom-center" as const,
   },
+}
+
+type ActiveViewer = {
+  handle: OverlayHandle
+  hidden: boolean
+}
+
+let activeGitDiffViewer: ActiveViewer | undefined
+
+export function restoreGitDiffViewer(): boolean {
+  if (!activeGitDiffViewer) return false
+  if (activeGitDiffViewer.hidden) {
+    activeGitDiffViewer.handle.setHidden(false)
+    activeGitDiffViewer.hidden = false
+  }
+  activeGitDiffViewer.handle.focus()
+  return true
 }
 
 const MIN_DIALOG_HEIGHT = 12
@@ -159,6 +178,9 @@ export async function openGitDiffViewer(
   ctx: ExtensionContext,
   options: GitDiffViewOptions = { scope: "all" },
 ): Promise<GitDiffViewerResult> {
+  if (restoreGitDiffViewer()) return { comments: [] }
+
+  let overlayHandle: OverlayHandle | undefined
   const result = await ctx.ui.custom<GitDiffViewerResult>(
     (tui, theme, _kb, done) => {
       const component = new GitDiffViewerComponent({
@@ -168,6 +190,16 @@ export async function openGitDiffViewer(
         theme,
         terminalRows: tui.terminal.rows,
         onClose: done,
+        onHide: () => {
+          if (!overlayHandle) return
+          overlayHandle.setHidden(true)
+          overlayHandle.unfocus()
+          if (activeGitDiffViewer) activeGitDiffViewer.hidden = true
+          ctx.ui.notify(
+            "Diff viewer hidden. Run /view-diff to show it again.",
+            "info",
+          )
+        },
         onRequestRender: () => tui.requestRender(),
       })
       return {
@@ -180,10 +212,21 @@ export async function openGitDiffViewer(
           component.handleInput(data)
           tui.requestRender()
         },
-        dispose: () => component.dispose(),
+        dispose: () => {
+          component.dispose()
+          if (activeGitDiffViewer?.handle === overlayHandle) {
+            activeGitDiffViewer = undefined
+          }
+        },
       }
     },
-    OVERLAY_OPTIONS,
+    {
+      ...OVERLAY_OPTIONS,
+      onHandle: (handle) => {
+        overlayHandle = handle
+        activeGitDiffViewer = { handle, hidden: false }
+      },
+    },
   )
 
   if (result.comments.length > 0) {
@@ -202,6 +245,7 @@ interface Options {
   theme: Theme
   terminalRows: number
   onClose: (result: GitDiffViewerResult) => void
+  onHide: () => void
   onRequestRender: () => void
 }
 
@@ -311,6 +355,10 @@ class GitDiffViewerComponent {
   handleInput(data: string): void {
     if (matchesKey(data, "ctrl+c")) {
       this.close()
+      return
+    }
+    if (isHideViewer(data)) {
+      this.options.onHide()
       return
     }
     if (this.handleTextInputMode(data)) return
@@ -629,8 +677,8 @@ class GitDiffViewerComponent {
     const toggleHint = this.viewMode === "diff" ? "v file" : "v diff"
     const help =
       this.focus === "viewer"
-        ? ` j/k move  d/u half page  g/G top/bottom  tab next  shift-tab prev  / search  ${toggleHint}  y copy path  c comment  q close `
-        : " j/k files  d/u scroll viewer  / filter  n/N next/prev  y copy path  enter focus viewer  q close "
+        ? ` j/k move  d/u half page  g/G top/bottom  tab next  shift-tab prev  / search  ${toggleHint}  y copy path  c comment  alt+/ hide  q close `
+        : " j/k files  d/u scroll viewer  / filter  n/N next/prev  y copy path  enter focus viewer  alt+/ hide  q close "
     return [
       this.theme.fg(
         this.copyStatus ? "success" : "dim",

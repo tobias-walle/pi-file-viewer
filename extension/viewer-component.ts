@@ -29,6 +29,7 @@ import {
   isEscape,
   isHalfPageDown,
   isHalfPageUp,
+  isHideViewer,
   isQuit,
   isTop,
   isUp,
@@ -45,6 +46,7 @@ interface FileViewerComponentOptions {
   theme: Theme
   visibleHeight: number
   onClose: (result: FileViewerResult) => void
+  onHide: () => void
   onRequestRender: () => void
 }
 
@@ -54,6 +56,7 @@ export class FileViewerComponent implements Focusable {
   private theme: Theme
   private visibleHeight: number
   private onClose: (result: FileViewerResult) => void
+  private onHide: () => void
   private onRequestRender: () => void
   private comments = new CommentStore<number>()
   private buffer = new LineBuffer<string>()
@@ -89,6 +92,7 @@ export class FileViewerComponent implements Focusable {
     this.theme = options.theme
     this.visibleHeight = options.visibleHeight
     this.onClose = options.onClose
+    this.onHide = options.onHide
     this.onRequestRender = options.onRequestRender
     this.buffer.setLines(this.buildBufferLines())
   }
@@ -96,6 +100,11 @@ export class FileViewerComponent implements Focusable {
   handleInput(data: string): void {
     if (isCtrlC(data)) {
       this.close()
+      return
+    }
+
+    if (isHideViewer(data)) {
+      this.onHide()
       return
     }
 
@@ -327,7 +336,7 @@ export class FileViewerComponent implements Focusable {
 
     const position = `${this.selectedLine}/${this.lineCount()}`
     const help =
-      "j/k move · d/u half page · g/G top/bottom · / search · n/N next/prev · y copy path · enter/c comment · x remove · C clear · q close"
+      "j/k move · d/u half page · g/G top/bottom · / search · n/N next/prev · y copy path · enter/c comment · x remove · C clear · alt+/ hide · q close"
     return [
       truncateToWidth(
         `${this.theme.fg("muted", position)} ${this.theme.fg("dim", help)}`,

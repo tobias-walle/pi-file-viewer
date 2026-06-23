@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
+import type { OverlayHandle } from "@earendil-works/pi-tui"
 import { formatReviewComments } from "./comments.js"
 import { getReviewFile, subscribeReviewFiles } from "./registry.js"
 import type { FileViewerResult, ReviewFile } from "./types.js"
@@ -15,6 +16,23 @@ const OVERLAY_OPTIONS = {
   },
 }
 
+type ActiveViewer = {
+  handle: OverlayHandle
+  hidden: boolean
+}
+
+let activeFileViewer: ActiveViewer | undefined
+
+export function restoreFileViewer(): boolean {
+  if (!activeFileViewer) return false
+  if (activeFileViewer.hidden) {
+    activeFileViewer.handle.setHidden(false)
+    activeFileViewer.hidden = false
+  }
+  activeFileViewer.handle.focus()
+  return true
+}
+
 function getDialogHeight(terminalRows: number): number {
   return Math.max(12, Math.floor(terminalRows * 0.82))
 }
@@ -23,6 +41,9 @@ export async function openFileViewer(
   ctx: ExtensionContext,
   file: ReviewFile,
 ): Promise<FileViewerResult> {
+  if (restoreFileViewer()) return { comments: [] }
+
+  let overlayHandle: OverlayHandle | undefined
   const result = await ctx.ui.custom<FileViewerResult>(
     (tui, theme, _kb, done) => {
       const initialDialogHeight = getDialogHeight(tui.terminal.rows)
@@ -32,6 +53,16 @@ export async function openFileViewer(
         theme,
         visibleHeight: Math.max(5, initialDialogHeight - 7),
         onClose: done,
+        onHide: () => {
+          if (!overlayHandle) return
+          overlayHandle.setHidden(true)
+          overlayHandle.unfocus()
+          if (activeFileViewer) activeFileViewer.hidden = true
+          ctx.ui.notify(
+            "File viewer hidden. Run /view-file to show it again.",
+            "info",
+          )
+        },
         onRequestRender: () => tui.requestRender(),
       })
       let pendingFile: ReviewFile | undefined
@@ -78,10 +109,19 @@ export async function openFileViewer(
         dispose: () => {
           if (updateTimer) clearTimeout(updateTimer)
           unsubscribe()
+          if (activeFileViewer?.handle === overlayHandle) {
+            activeFileViewer = undefined
+          }
         },
       }
     },
-    OVERLAY_OPTIONS,
+    {
+      ...OVERLAY_OPTIONS,
+      onHandle: (handle) => {
+        overlayHandle = handle
+        activeFileViewer = { handle, hidden: false }
+      },
+    },
   )
 
   if (result.comments.length > 0) {

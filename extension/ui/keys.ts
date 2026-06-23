@@ -35,3 +35,7 @@ export function isTop(data: string): boolean {
 export function isBottom(data: string): boolean {
   return data === "G"
 }
+
+export function isHideViewer(data: string): boolean {
+  return matchesKey(data, "alt+/") || data === "\x1b/"
+}

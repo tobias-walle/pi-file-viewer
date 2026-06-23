@@ -20,7 +20,7 @@ import {
   type NormalizedEditInput,
 } from "./diff.js"
 import { parseGitDiffViewArgs } from "./git-diff.js"
-import { openGitDiffViewer } from "./git-diff-viewer.js"
+import { openGitDiffViewer, restoreGitDiffViewer } from "./git-diff-viewer.js"
 import { resolvePath } from "./path.js"
 import {
   addReviewFile,
@@ -30,7 +30,7 @@ import {
   setReviewScope,
 } from "./registry.js"
 import type { ReviewFile, ReviewFileStatus } from "./types.js"
-import { openFileViewer } from "./viewer.js"
+import { openFileViewer, restoreFileViewer } from "./viewer.js"
 
 const MAX_VIEW_FILE_BYTES = 5 * 1024 * 1024
 const STREAMING_UPDATE_DELAY_MS = 100
@@ -90,7 +90,13 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("view-diff", {
     description: "Review git changes, optionally staged or unstaged only",
     handler: async (args, ctx) => {
-      await openGitDiffViewer(ctx, parseGitDiffViewArgs(args))
+      if (restoreGitDiffViewer()) return
+      void openGitDiffViewer(ctx, parseGitDiffViewArgs(args)).catch((error) => {
+        ctx.ui.notify(
+          error instanceof Error ? error.message : "Failed to open diff viewer",
+          "error",
+        )
+      })
     },
   })
 
@@ -103,6 +109,8 @@ export default function (pi: ExtensionAPI) {
 }
 
 async function reviewFile(ctx: ExtensionContext): Promise<void> {
+  if (restoreFileViewer()) return
+
   activateReviewScope(ctx)
   flushStreamingAssistantMessage(getReviewScope(ctx))
   await rebuildReviewFiles(ctx)
@@ -110,7 +118,13 @@ async function reviewFile(ctx: ExtensionContext): Promise<void> {
   const cwd = getCurrentCwd(ctx)
   const file = await selectReviewFile(ctx, files, cwd)
   if (!file) return
-  await openFileViewer(ctx, await hydrateReviewFileForViewing(file, cwd))
+  const hydratedFile = await hydrateReviewFileForViewing(file, cwd)
+  void openFileViewer(ctx, hydratedFile).catch((error) => {
+    ctx.ui.notify(
+      error instanceof Error ? error.message : "Failed to open file viewer",
+      "error",
+    )
+  })
 }
 
 function parseWriteInput(
