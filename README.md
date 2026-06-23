@@ -47,15 +47,15 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
 export default function (pi: ExtensionAPI) {
   pi.registerShortcut("alt+w", {
-    description: "Prefill /view-file",
-    handler: (ctx) => {
-      ctx.ui.setEditorText("/view-file")
+    description: "Open file viewer",
+    handler: () => {
+      pi.sendUserMessage("/view-file")
     },
   })
 }
 ```
 
-Run `/reload`, press `Alt+W`, then press `Enter` to open the file picker. Change `alt+w` to any shortcut you prefer.
+Run `/reload`, then press `Alt+W` to open the file picker. Change `alt+w` to any shortcut you prefer.
 
 ![Guided diff review showing ranked files and an inline review cue](assets/view-diff-guide.png)
 
