@@ -33,6 +33,7 @@ import type {
   DiffRow,
   GitChangedFile,
   GitDiffComment,
+  GitDiffGuideEntry,
   GitDiffLoadResult,
   GitDiffViewerResult,
 } from "./types.js"
@@ -187,6 +188,7 @@ export async function openGitDiffViewer(
         cwd: ctx.sessionManager.getCwd() || ctx.cwd,
         compareRef: options.compareRef,
         scope: options.scope,
+        guideEntries: options.guideEntries,
         theme,
         terminalRows: tui.terminal.rows,
         onClose: done,
@@ -242,6 +244,7 @@ interface Options {
   cwd: string
   compareRef?: string
   scope: GitDiffViewOptions["scope"]
+  guideEntries?: GitDiffGuideEntry[]
   theme: Theme
   terminalRows: number
   onClose: (result: GitDiffViewerResult) => void
@@ -251,7 +254,7 @@ interface Options {
 
 class GitDiffViewerComponent {
   private state: TopState = { status: "loading" }
-  private focus: FocusPane = "overview"
+  private focus: FocusPane = "viewer"
   private inputMode: InputMode = "normal"
   private overviewBuffer = new LineBuffer<GitChangedFile>()
   private viewerBuffer = new LineBuffer<DiffRow>()
@@ -281,8 +284,12 @@ class GitDiffViewerComponent {
   private copyStatus = ""
   private cached?: { width: number; lines: string[] }
   private spinner?: NodeJS.Timeout
+  private guideEntriesByPath = new Map<string, GitDiffGuideEntry>()
 
   constructor(private options: Options) {
+    this.guideEntriesByPath = new Map(
+      options.guideEntries?.map((entry) => [entry.path, entry]),
+    )
     void this.loadOverview()
   }
 
@@ -408,10 +415,12 @@ class GitDiffViewerComponent {
       return this.requestRender()
     }
     try {
-      const files = await loadGitChangedFiles(
-        discovery.root,
-        discovery.base,
-        this.options.scope,
+      const files = this.orderFilesByGuide(
+        await loadGitChangedFiles(
+          discovery.root,
+          discovery.base,
+          this.options.scope,
+        ),
       )
       this.state = {
         status: "loaded",
@@ -518,6 +527,10 @@ class GitDiffViewerComponent {
     const selected = index === this.selectedFile
     const selectedBg = selected ? this.theme.getBgAnsi("selectedBg") : RESET_BG
     const searchQuery = this.overviewBuffer.searchQuery
+    const rank = this.guideEntry(file)?.rank
+    const rankText = rank
+      ? this.theme.fg("muted", `#${String(rank).padStart(2, "0")} `)
+      : ""
     const statusText = file.status.padEnd(2)
     const status = this.theme.fg(
       statusColor(file.status),
@@ -530,7 +543,7 @@ class GitDiffViewerComponent {
         ? `${file.oldPath} -> ${file.path}`
         : file.path
     const stats = this.renderStats(file)
-    const prefix = `${status} `
+    const prefix = `${rankText}${status} `
     const available = Math.max(
       1,
       width - visibleWidth(prefix) - visibleWidth(stats) - 2,
@@ -569,14 +582,22 @@ class GitDiffViewerComponent {
       ),
       this.separatorLine(width),
     ]
-    const bodyHeight = this.layout().viewerBodyHeight
+    const fullBodyHeight = this.layout().viewerBodyHeight
+    const guideLines = this.renderGuideLines(
+      file,
+      width,
+      Math.max(0, fullBodyHeight - MIN_VIEWER_BODY_HEIGHT),
+    )
+    lines.push(...guideLines)
+    const bodyHeight = fullBodyHeight - guideLines.length
+    const bodyEnd = lines.length + bodyHeight
     const prepared = this.preparedRows(file, rows)
     this.setViewerLines(prepared.viewerLines)
     this.applyPendingViewerLine(rows, bodyHeight)
     this.ensureViewerVisible(rows, bodyHeight)
     const numberWidth = prepared.numberWidth
     let rowIndex = this.viewerScroll
-    while (lines.length < bodyHeight + 2) {
+    while (lines.length < bodyEnd) {
       const row = rows[rowIndex]
       if (!row) {
         lines.push("")
@@ -592,7 +613,7 @@ class GitDiffViewerComponent {
         numberWidth,
         width,
       )
-      lines.push(...renderedRows.slice(0, bodyHeight + 2 - lines.length))
+      lines.push(...renderedRows.slice(0, bodyEnd - lines.length))
       rowIndex++
     }
     lines.push(this.separatorLine(width))
@@ -653,6 +674,26 @@ class GitDiffViewerComponent {
     if (markerKind === "removed") return "-"
     if (markerKind === "hunk") return this.theme.fg("accent", "@")
     return " "
+  }
+
+  private renderGuideLines(
+    file: GitChangedFile,
+    width: number,
+    maxLines: number,
+  ): string[] {
+    const guide = this.guideEntry(file)
+    if (!guide || maxLines <= 0) return []
+
+    const label = `Guide #${String(guide.rank).padStart(2, "0")}: `
+    const text = `${this.theme.fg("accent", label)}${this.theme.fg("dim", guide.reason)}`
+    const wrapped = wrapTextWithAnsi(text, width)
+    const lines = wrapped.slice(0, Math.min(2, maxLines))
+    if (wrapped.length > lines.length && lines.length > 0) {
+      const lastIndex = lines.length - 1
+      lines[lastIndex] =
+        `${truncateToWidth(lines[lastIndex] ?? "", Math.max(1, width - 1), "")}…`
+    }
+    return lines
   }
 
   private renderFooter(width: number, file: GitChangedFile): string[] {
@@ -806,6 +847,19 @@ class GitDiffViewerComponent {
   private filteredFiles(): GitChangedFile[] {
     if (this.state.status !== "loaded") return []
     return this.state.files
+  }
+
+  private orderFilesByGuide(files: GitChangedFile[]): GitChangedFile[] {
+    if (this.guideEntriesByPath.size === 0) return files
+    return [...files].sort((left, right) => {
+      const leftRank = this.guideEntry(left)?.rank ?? Number.MAX_SAFE_INTEGER
+      const rightRank = this.guideEntry(right)?.rank ?? Number.MAX_SAFE_INTEGER
+      return leftRank - rightRank
+    })
+  }
+
+  private guideEntry(file: GitChangedFile): GitDiffGuideEntry | undefined {
+    return this.guideEntriesByPath.get(file.path)
   }
 
   private buildOverviewLines(files: GitChangedFile[]) {

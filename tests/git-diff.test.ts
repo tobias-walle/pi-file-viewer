@@ -15,7 +15,7 @@ test("parses view-diff compare ref argument", () => {
   expect(parseGitDiffCompareRef("origin/main")).toBe("origin/main")
 })
 
-test("parses view-diff staged and unstaged flags", () => {
+test("parses view-diff staged, unstaged, and guide flags", () => {
   expect(parseGitDiffViewArgs("--staged")).toEqual({ scope: "staged" })
   expect(parseGitDiffViewArgs("-s main")).toEqual({
     compareRef: "main",
@@ -23,6 +23,22 @@ test("parses view-diff staged and unstaged flags", () => {
   })
   expect(parseGitDiffViewArgs("--unstaged")).toEqual({ scope: "unstaged" })
   expect(parseGitDiffViewArgs("-u")).toEqual({ scope: "unstaged" })
+  expect(parseGitDiffViewArgs("--guide")).toEqual({
+    guide: true,
+    scope: "all",
+  })
+  expect(parseGitDiffViewArgs("-g")).toEqual({
+    guide: true,
+    scope: "all",
+  })
+  expect(parseGitDiffViewArgs("main --guide --staged")).toEqual({
+    compareRef: "main",
+    guide: true,
+    scope: "staged",
+  })
+  expect(parseGitDiffViewArgs("--staged --unstaged")).toEqual({
+    scope: "unstaged",
+  })
 })
 
 test("parses git name status including renames", () => {

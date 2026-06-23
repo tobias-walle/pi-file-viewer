@@ -1,8 +1,14 @@
 import { execFile } from "node:child_process"
 import { open, readFile, stat } from "node:fs/promises"
 import { join } from "node:path"
+import { parseCommandArgs } from "./command-args.js"
 import { countLogicalLines } from "./diff.js"
-import type { DiffRow, GitChangedFile, GitDiffLoadResult } from "./types.js"
+import type {
+  DiffRow,
+  GitChangedFile,
+  GitDiffGuideEntry,
+  GitDiffLoadResult,
+} from "./types.js"
 
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 export const MAX_GIT_DIFF_INLINE_BYTES = 1024 * 1024
@@ -12,6 +18,8 @@ export type GitDiffScope = "all" | "staged" | "unstaged"
 export interface GitDiffViewOptions {
   compareRef?: string
   scope: GitDiffScope
+  guide?: boolean
+  guideEntries?: GitDiffGuideEntry[]
 }
 
 export type GitRepoDiscovery =
@@ -23,18 +31,32 @@ export function parseGitDiffCompareRef(args: string): string | undefined {
   return parseGitDiffViewArgs(args).compareRef
 }
 
-export function parseGitDiffViewArgs(args: string): GitDiffViewOptions {
-  const tokens = args.trim() ? args.trim().split(/\s+/) : []
-  let scope: GitDiffScope = "all"
-  const refs: string[] = []
+type GitDiffArgFlag = "staged" | "unstaged" | "guide"
 
-  for (const token of tokens) {
-    if (token === "--staged" || token === "-s") scope = "staged"
-    else if (token === "--unstaged" || token === "-u") scope = "unstaged"
-    else refs.push(token)
+const GIT_DIFF_ARG_FLAGS = [
+  { name: "staged", tokens: ["--staged", "-s"] },
+  { name: "unstaged", tokens: ["--unstaged", "-u"] },
+  { name: "guide", tokens: ["--guide", "-g"] },
+] as const satisfies readonly {
+  name: GitDiffArgFlag
+  tokens: readonly string[]
+}[]
+
+export function parseGitDiffViewArgs(args: string): GitDiffViewOptions {
+  const parsed = parseCommandArgs<GitDiffArgFlag>(args, GIT_DIFF_ARG_FLAGS)
+  let scope: GitDiffScope = "all"
+
+  for (const flag of parsed.flagOrder) {
+    if (flag === "staged") scope = "staged"
+    else if (flag === "unstaged") scope = "unstaged"
   }
 
-  return { compareRef: refs.join(" ") || undefined, scope }
+  const options: GitDiffViewOptions = {
+    compareRef: parsed.positionals.join(" ") || undefined,
+    scope,
+  }
+  if (parsed.flags.has("guide")) options.guide = true
+  return options
 }
 
 export async function discoverGitRepository(
@@ -101,6 +123,24 @@ export async function loadGitChangedFiles(
   }
 
   return files
+}
+
+export async function loadGitFullDiff(
+  root: string,
+  base: string,
+  scope: GitDiffScope,
+  files: readonly GitChangedFile[],
+): Promise<string> {
+  const [trackedDiff, untrackedDiffs] = await Promise.all([
+    git(fullDiffArgs(base, scope), root),
+    Promise.all(
+      files
+        .filter((file) => file.status === "??")
+        .map((file) => formatUntrackedDiff(root, file)),
+    ),
+  ])
+
+  return [trackedDiff.trimEnd(), ...untrackedDiffs].filter(Boolean).join("\n")
 }
 
 export async function loadGitDiffRows(
@@ -191,6 +231,14 @@ function numstatArgs(base: string, scope: GitDiffScope): string[] {
   if (scope === "staged")
     return ["diff", "--cached", "--numstat", "-M", base, "--"]
   return ["diff", "--numstat", "-M", base, "--"]
+}
+
+function fullDiffArgs(base: string, scope: GitDiffScope): string[] {
+  if (scope === "unstaged")
+    return ["diff", "--binary", "--unified=3", "-M", "--"]
+  if (scope === "staged")
+    return ["diff", "--cached", "--binary", "--unified=3", "-M", base, "--"]
+  return ["diff", "--binary", "--unified=3", "-M", base, "--"]
 }
 
 function diffRowsArgs(
@@ -405,6 +453,56 @@ async function loadUntrackedDiffRows(
       ),
     }
   }
+}
+
+async function formatUntrackedDiff(
+  root: string,
+  file: GitChangedFile,
+): Promise<string> {
+  if (file.large) {
+    throw new Error(
+      `Cannot guide ${file.path}: untracked file is too large to include in the full diff.`,
+    )
+  }
+  if (file.binary) {
+    throw new Error(
+      `Cannot guide ${file.path}: untracked binary files cannot be included in the full diff.`,
+    )
+  }
+
+  const content = await readUntrackedDiffContent(root, file)
+  const lines = splitFileLines(content)
+  const header = [
+    `diff --git a/${file.path} b/${file.path}`,
+    "new file mode 100644",
+    "index 0000000..0000000",
+    "--- /dev/null",
+    `+++ b/${file.path}`,
+    `@@ -0,0 +1,${lines.length} @@`,
+  ]
+  return [...header, ...lines.map((line) => `+${line}`)].join("\n")
+}
+
+async function readUntrackedDiffContent(
+  root: string,
+  file: GitChangedFile,
+): Promise<string> {
+  try {
+    return await readFileWithLimit(join(root, file.path))
+  } catch (error) {
+    if (error instanceof FileTooLargeError) {
+      throw new Error(
+        `Cannot guide ${file.path}: untracked file is too large to include in the full diff.`,
+      )
+    }
+    throw error
+  }
+}
+
+function splitFileLines(content: string): string[] {
+  if (!content) return []
+  const normalized = content.endsWith("\n") ? content.slice(0, -1) : content
+  return normalized ? normalized.split("\n") : []
 }
 
 function cardRows(title: string, message: string): DiffRow[] {

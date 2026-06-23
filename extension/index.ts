@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process"
 import { readFile, stat } from "node:fs/promises"
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  Theme,
-  WriteToolInput,
+import {
+  BorderedLoader,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type Theme,
+  type WriteToolInput,
 } from "@earendil-works/pi-coding-agent"
 import {
   fuzzyFilter,
@@ -19,7 +20,8 @@ import {
   type EditDetails,
   type NormalizedEditInput,
 } from "./diff.js"
-import { parseGitDiffViewArgs } from "./git-diff.js"
+import { type GitDiffViewOptions, parseGitDiffViewArgs } from "./git-diff.js"
+import { createGitDiffGuide } from "./git-diff-guide.js"
 import { openGitDiffViewer, restoreGitDiffViewer } from "./git-diff-viewer.js"
 import { resolvePath } from "./path.js"
 import {
@@ -29,7 +31,11 @@ import {
   getReviewFiles,
   setReviewScope,
 } from "./registry.js"
-import type { ReviewFile, ReviewFileStatus } from "./types.js"
+import type {
+  GitDiffGuideEntry,
+  ReviewFile,
+  ReviewFileStatus,
+} from "./types.js"
 import { openFileViewer, restoreFileViewer } from "./viewer.js"
 
 const MAX_VIEW_FILE_BYTES = 5 * 1024 * 1024
@@ -91,12 +97,23 @@ export default function (pi: ExtensionAPI) {
     description: "Review git changes, optionally staged or unstaged only",
     handler: async (args, ctx) => {
       if (restoreGitDiffViewer()) return
-      void openGitDiffViewer(ctx, parseGitDiffViewArgs(args)).catch((error) => {
-        ctx.ui.notify(
-          error instanceof Error ? error.message : "Failed to open diff viewer",
-          "error",
-        )
-      })
+
+      const options = parseGitDiffViewArgs(args)
+      const guideEntries = options.guide
+        ? await generateGitDiffGuideForViewer(ctx, options)
+        : undefined
+      if (options.guide && !guideEntries) return
+
+      void openGitDiffViewer(ctx, { ...options, guideEntries }).catch(
+        (error) => {
+          ctx.ui.notify(
+            error instanceof Error
+              ? error.message
+              : "Failed to open diff viewer",
+            "error",
+          )
+        },
+      )
     },
   })
 
@@ -106,6 +123,66 @@ export default function (pi: ExtensionAPI) {
       await reviewFile(ctx)
     },
   })
+}
+
+type GuideGenerationResult =
+  | { status: "ok"; entries: GitDiffGuideEntry[] }
+  | { status: "error"; message: string }
+  | { status: "cancelled" }
+
+async function generateGitDiffGuideForViewer(
+  ctx: ExtensionContext,
+  options: GitDiffViewOptions,
+): Promise<GitDiffGuideEntry[] | undefined> {
+  const result =
+    ctx.mode === "tui"
+      ? await generateGitDiffGuideWithLoader(ctx, options)
+      : await generateGitDiffGuide(ctx, options)
+
+  if (result.status === "ok") return result.entries
+  if (result.status === "cancelled") ctx.ui.notify("Cancelled", "info")
+  else ctx.ui.notify(result.message, "error")
+  return undefined
+}
+
+async function generateGitDiffGuideWithLoader(
+  ctx: ExtensionContext,
+  options: GitDiffViewOptions,
+): Promise<GuideGenerationResult> {
+  return await ctx.ui.custom<GuideGenerationResult>((tui, theme, _kb, done) => {
+    const loader = new BorderedLoader(tui, theme, "Planning review order...")
+    loader.onAbort = () => done({ status: "cancelled" })
+
+    void createGitDiffGuide(ctx, options, loader.signal).then(
+      (guide) => done({ status: "ok", entries: guide.entries }),
+      (error) =>
+        done({
+          status: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to plan review order",
+        }),
+    )
+
+    return loader
+  })
+}
+
+async function generateGitDiffGuide(
+  ctx: ExtensionContext,
+  options: GitDiffViewOptions,
+): Promise<GuideGenerationResult> {
+  try {
+    const guide = await createGitDiffGuide(ctx, options)
+    return { status: "ok", entries: guide.entries }
+  } catch (error) {
+    return {
+      status: "error",
+      message:
+        error instanceof Error ? error.message : "Failed to plan review order",
+    }
+  }
 }
 
 async function reviewFile(ctx: ExtensionContext): Promise<void> {

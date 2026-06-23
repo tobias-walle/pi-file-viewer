@@ -38,17 +38,23 @@ cp -R pi-file-viewer/extension ~/.pi/agent/extensions/file-viewer
 - Run `/view-diff --unstaged` or `/view-diff -u` to review unstaged and untracked changes only.
 - Run `/view-diff --staged` or `/view-diff -s` to review staged changes only.
 - Run `/view-diff <ref>` to review changes compared with a git ref, for example `/view-diff main`.
+- Add `--guide` or `-g` to ask the current model to sort files into a review order and show a short review cue for each file, for example `/view-diff -g --staged`.
 - Press `Alt+W` to open the file picker from the keyboard.
+
+![Guided diff review showing ranked files and an inline review cue](assets/view-diff-guide.png)
+
+Diff viewer opens with the file content focused.
 
 Diff viewer keys:
 
-- Overview focus: `j` / `k`, arrows, `g` / `G` move through files
+- Overview focus: `j` / `k`, arrows, `g` / `G` move through files. Guided files show their guide rank as `#01`, `#02`, and so on.
 - Overview focus: `d` / `u`, `C-d` / `C-u` scrolls the bottom viewer without changing files
 - Overview focus: `/` searches by path, status, or stats, `n` / `N` jumps between matches, `enter` focuses the viewer
 - Viewer focus: `j` / `k`, arrows, `d` / `u`, `g` / `G` move through the current diff or file
 - Viewer focus: `tab` / `shift-tab` changes files
 - Viewer focus: `/` searches, `n` / `N` jumps between matches
 - Viewer focus: `v` toggles diff and final file content
+- With `--guide`, the viewer shows a short `Guide #NN:` review cue above the current file diff.
 - `y` copies the current absolute path to the clipboard
 - Viewer focus: `enter` or `c` comments, `x` removes a comment, `C` clears all comments
 - `Alt+/` hides the viewer without losing state. Run `/view-diff` to show it again.

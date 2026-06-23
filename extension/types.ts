@@ -41,6 +41,12 @@ export interface GitChangedFile {
   size?: number
 }
 
+export interface GitDiffGuideEntry {
+  path: string
+  reason: string
+  rank: number
+}
+
 export type DiffRowKind =
   | "hunk"
   | "context"
