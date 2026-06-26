@@ -44,18 +44,37 @@ This extension does not install a global keyboard shortcut. To create your own, 
 
 ```ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { openFileReview, openGitDiffReview } from "pi-file-viewer"
 
 export default function (pi: ExtensionAPI) {
   pi.registerShortcut("alt+w", {
     description: "Open file viewer",
-    handler: () => {
-      pi.sendUserMessage("/view-file")
+    handler: async (ctx) => {
+      await openFileReview(ctx)
+    },
+  })
+
+  pi.registerShortcut("alt+r", {
+    description: "Open diff viewer",
+    handler: async (ctx) => {
+      await openGitDiffReview(ctx)
     },
   })
 }
 ```
 
-Run `/reload`, then press `Alt+W` to open the file picker. Change `alt+w` to any shortcut you prefer.
+Run `/reload`, then press `Alt+W` to open the file picker or `Alt+R` to open the diff viewer. Change the shortcut strings to any keys you prefer.
+
+Pass the same arguments as `/view-diff` to `openGitDiffReview` when you want a shortcut for a specific diff mode:
+
+```ts
+pi.registerShortcut("alt+shift+r", {
+  description: "Open staged diff viewer",
+  handler: async (ctx) => {
+    await openGitDiffReview(ctx, "--staged")
+  },
+})
+```
 
 ![Guided diff review showing ranked files and an inline review cue](assets/view-diff-guide.png)
 

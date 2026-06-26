@@ -16,6 +16,10 @@
     "README.md",
     "LICENSE"
   ],
+  "exports": {
+    ".": "./extension/index.ts",
+    "./extension": "./extension/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",

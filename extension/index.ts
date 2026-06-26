@@ -89,34 +89,16 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("view-file", {
     description: "View a recent write/edit tool call in a reusable file viewer",
     handler: async (_args, ctx) => {
-      await reviewFile(ctx)
+      await openFileReview(ctx)
     },
   })
 
   pi.registerCommand("view-diff", {
     description: "Review git changes, optionally staged or unstaged only",
     handler: async (args, ctx) => {
-      if (restoreGitDiffViewer()) return
-
-      const options = parseGitDiffViewArgs(args)
-      const guideEntries = options.guide
-        ? await generateGitDiffGuideForViewer(ctx, options)
-        : undefined
-      if (options.guide && !guideEntries) return
-
-      void openGitDiffViewer(ctx, { ...options, guideEntries }).catch(
-        (error) => {
-          ctx.ui.notify(
-            error instanceof Error
-              ? error.message
-              : "Failed to open diff viewer",
-            "error",
-          )
-        },
-      )
+      await openGitDiffReview(ctx, args)
     },
   })
-
 }
 
 type GuideGenerationResult =
@@ -179,7 +161,7 @@ async function generateGitDiffGuide(
   }
 }
 
-async function reviewFile(ctx: ExtensionContext): Promise<void> {
+export async function openFileReview(ctx: ExtensionContext): Promise<void> {
   if (restoreFileViewer()) return
 
   activateReviewScope(ctx)
@@ -193,6 +175,26 @@ async function reviewFile(ctx: ExtensionContext): Promise<void> {
   void openFileViewer(ctx, hydratedFile).catch((error) => {
     ctx.ui.notify(
       error instanceof Error ? error.message : "Failed to open file viewer",
+      "error",
+    )
+  })
+}
+
+export async function openGitDiffReview(
+  ctx: ExtensionContext,
+  args = "",
+): Promise<void> {
+  if (restoreGitDiffViewer()) return
+
+  const options = parseGitDiffViewArgs(args)
+  const guideEntries = options.guide
+    ? await generateGitDiffGuideForViewer(ctx, options)
+    : undefined
+  if (options.guide && !guideEntries) return
+
+  void openGitDiffViewer(ctx, { ...options, guideEntries }).catch((error) => {
+    ctx.ui.notify(
+      error instanceof Error ? error.message : "Failed to open diff viewer",
       "error",
     )
   })
