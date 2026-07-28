@@ -33,18 +33,18 @@ test("overview d/u keys scroll the diff viewer", () => {
 
 test("diff viewer layout derives scrollable body heights from chrome", () => {
   expect(calculateGitDiffViewerLayout(40)).toEqual({
-    totalHeight: 32,
-    overviewHeight: 7,
-    overviewBodyHeight: 4,
-    viewerHeight: 25,
-    viewerBodyHeight: 20,
+    totalHeight: 40,
+    overviewHeight: 8,
+    overviewBodyHeight: 5,
+    viewerHeight: 32,
+    viewerBodyHeight: 27,
   })
 
   expect(calculateGitDiffViewerLayout(40, 2)).toEqual({
-    totalHeight: 32,
-    overviewHeight: 7,
-    overviewBodyHeight: 4,
-    viewerHeight: 25,
-    viewerBodyHeight: 18,
+    totalHeight: 40,
+    overviewHeight: 8,
+    overviewBodyHeight: 5,
+    viewerHeight: 32,
+    viewerBodyHeight: 25,
   })
 })

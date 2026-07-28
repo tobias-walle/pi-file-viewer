@@ -11,8 +11,8 @@ const OVERLAY_OPTIONS = {
   overlay: true as const,
   overlayOptions: {
     width: "100%" as const,
-    maxHeight: "85%" as const,
-    anchor: "bottom-center" as const,
+    maxHeight: "100%" as const,
+    anchor: "top-center" as const,
   },
 }
 
@@ -34,7 +34,7 @@ export function restoreFileViewer(): boolean {
 }
 
 function getDialogHeight(terminalRows: number): number {
-  return Math.max(12, Math.floor(terminalRows * 0.82))
+  return Math.max(12, terminalRows)
 }
 
 export async function openFileViewer(

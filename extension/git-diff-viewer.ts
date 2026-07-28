@@ -54,8 +54,8 @@ const OVERLAY_OPTIONS = {
   overlay: true as const,
   overlayOptions: {
     width: "100%" as const,
-    maxHeight: "85%" as const,
-    anchor: "bottom-center" as const,
+    maxHeight: "100%" as const,
+    anchor: "top-center" as const,
   },
 }
 
@@ -77,7 +77,6 @@ export function restoreGitDiffViewer(): boolean {
 }
 
 const MIN_DIALOG_HEIGHT = 12
-const DIALOG_HEIGHT_RATIO = 0.82
 const MIN_OVERVIEW_HEIGHT = 5
 const MAX_OVERVIEW_HEIGHT = 8
 const OVERVIEW_HEIGHT_RATIO = 0.22
@@ -111,10 +110,7 @@ export function calculateGitDiffViewerLayout(
   terminalRows: number,
   inputExtraLines = 0,
 ): GitDiffViewerLayout {
-  const totalHeight = Math.max(
-    MIN_DIALOG_HEIGHT,
-    Math.floor(terminalRows * DIALOG_HEIGHT_RATIO),
-  )
+  const totalHeight = Math.max(MIN_DIALOG_HEIGHT, terminalRows)
   const overviewHeight = Math.min(
     MAX_OVERVIEW_HEIGHT,
     Math.max(
