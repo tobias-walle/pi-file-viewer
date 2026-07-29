@@ -16,15 +16,13 @@ export function formatCommentBlock(
   comment: string,
   snippet?: string,
 ): string[] {
-  const lines = [`- File: ${inlineCode(location)}`]
+  const lines = [`### ${inlineCode(location)}`]
   if (snippet !== undefined && snippet.length > 0) {
-    lines.push(`  Snippet: ${inlineCode(truncateSnippet(snippet))}`)
+    lines.push("", ...snippet.split(/\r?\n/).map((line) => `    ${line}`))
   }
-  lines.push(`  Comment: ${comment}`)
+  lines.push(
+    "",
+    ...comment.split(/\r?\n/).map((line) => (line ? `> ${line}` : ">")),
+  )
   return lines
-}
-
-function truncateSnippet(text: string): string {
-  const maxLength = 120
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`
 }

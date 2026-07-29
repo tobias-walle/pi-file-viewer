@@ -99,6 +99,7 @@ export type ViewerAction =
   | { type: "moveViewerAbsolute"; line: number }
   | { type: "startSearch" }
   | { type: "moveSearch"; delta: SearchDelta }
+  | { type: "visualMode"; action: "toggle" | "exit" }
   | { type: "toggleViewMode" }
   | { type: "startComment" }
   | { type: "removeComment" }
@@ -108,6 +109,7 @@ export type ViewerAction =
 
 interface ViewerActionOptions {
   hasSearch: boolean
+  visualMode: boolean
   half: number
   lastLine: number
 }
@@ -129,7 +131,11 @@ const viewerActionResolvers: ActionResolver<
   {
     matches: (data) => matchesKey(data, "escape"),
     action: (options) =>
-      options.hasSearch ? { type: "clearSearch" } : { type: "focusOverview" },
+      options.visualMode
+        ? { type: "visualMode", action: "exit" }
+        : options.hasSearch
+          ? { type: "clearSearch" }
+          : { type: "focusOverview" },
   },
   {
     matches: (data) => matchesKey(data, "tab"),
@@ -171,6 +177,10 @@ const viewerActionResolvers: ActionResolver<
   },
   {
     matches: (data) => data === "v",
+    action: () => ({ type: "visualMode", action: "toggle" }),
+  },
+  {
+    matches: (data) => data === "t",
     action: () => ({ type: "toggleViewMode" }),
   },
   { matches: (data) => data === "y", action: () => ({ type: "copyPath" }) },

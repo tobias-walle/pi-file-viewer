@@ -7,8 +7,8 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui"
 import { copyTextToClipboard } from "./clipboard.js"
-import { CommentStore } from "./comment-store.js"
 import { resolvePath } from "./path.js"
+import { type LineRange, RangeCommentStore } from "./range-comment-store.js"
 import { decorateSearchMatches } from "./search.js"
 import type {
   FileViewerResult,
@@ -36,6 +36,7 @@ import {
 } from "./ui/keys.js"
 import { LineBuffer } from "./ui/line-buffer.js"
 import { TextPrompt } from "./ui/text-prompt.js"
+import { VisualLineSelection } from "./ui/visual-line-selection.js"
 import { highlightForPath } from "./utils/markdown-highlight.js"
 
 type Mode = "view" | "comment" | "search"
@@ -58,8 +59,10 @@ export class FileViewerComponent implements Focusable {
   private onClose: (result: FileViewerResult) => void
   private onHide: () => void
   private onRequestRender: () => void
-  private comments = new CommentStore<number>()
+  private comments = new RangeCommentStore<undefined>()
+  private pendingCommentRange?: LineRange
   private buffer = new LineBuffer<string>()
+  private visualSelection = new VisualLineSelection()
   private cachedWidth?: number
   private cachedBodyHeight?: number
   private cachedLines?: string[]
@@ -173,6 +176,7 @@ export class FileViewerComponent implements Focusable {
 
     this.file = file
     this.buffer.setLines(this.buildBufferLines())
+    this.visualSelection.clamp(this.buffer.length)
     this.buffer.ensureVisible(this.visibleHeight)
     this.invalidate()
   }
@@ -192,7 +196,9 @@ export class FileViewerComponent implements Focusable {
   private handleViewControlInput(data: string): boolean {
     if (!isEscape(data) && data !== "q") return false
 
-    if (isEscape(data) && this.searchQuery) {
+    if (isEscape(data) && this.visualSelection.active) {
+      this.exitVisualMode()
+    } else if (isEscape(data) && this.searchQuery) {
       this.clearSearch()
     } else {
       this.close()
@@ -215,19 +221,24 @@ export class FileViewerComponent implements Focusable {
   }
 
   private handleViewActionInput(data: string): void {
-    if (data === "c" || matchesKey(data, "enter")) this.startCommentInput()
-    else if (data === "/") this.startSearchInput()
+    if (data === "v") this.toggleVisualMode()
+    else if (data === "c" || matchesKey(data, "enter")) {
+      this.startCommentInput()
+    } else if (data === "/") this.startSearchInput()
     else if (data === "n") this.moveToSearchMatch(1)
     else if (data === "N") this.moveToSearchMatch(-1)
-    else if (data === "x") this.removeSelectedComment()
-    else if (data === "C") this.clearComments()
+    else if (data === "x") {
+      this.exitVisualMode()
+      this.removeSelectedComment()
+    } else if (data === "C") this.clearComments()
     else if (data === "y") this.copyCurrentPath()
   }
 
   private renderHeader(width: number): string {
     const title = `${this.file.kind} ${this.file.path}`
     const status = this.file.status === "streaming" ? "streaming, " : ""
-    const meta = `${status}${this.lineCount()} lines, ${this.comments.size} comments`
+    const visual = this.visualSelection.active ? "VISUAL LINE, " : ""
+    const meta = `${visual}${status}${this.lineCount()} lines, ${this.comments.size} comments`
     return renderHeader(this.theme, title, meta, width)
   }
 
@@ -255,10 +266,11 @@ export class FileViewerComponent implements Focusable {
     numberWidth: number,
     width: number,
   ): string[] {
-    const isSelected = lineNumber === this.selectedLine
-    const hasComment = this.comments.has(lineNumber)
+    const isSelected = this.isLineSelected(lineNumber)
+    const hasComment = this.comments.hasAt(this.commentScope(), lineNumber)
     const lineKind = this.getLineKind(lineNumber)
-    const cursor = isSelected ? this.theme.fg("accent", ">") : " "
+    const cursor =
+      lineNumber === this.selectedLine ? this.theme.fg("accent", ">") : " "
     const marker = this.renderLineMarker(lineKind, hasComment)
     const lineNumberText = String(lineNumber).padStart(numberWidth)
     const gutter = `${cursor}${marker} ${this.theme.fg("muted", lineNumberText)} │ `
@@ -317,7 +329,7 @@ export class FileViewerComponent implements Focusable {
     if (this.mode === "comment") {
       const prompt = this.theme.fg(
         "warning",
-        `Comment Line ${this.selectedLine}`,
+        `Comment ${this.formatCommentRange(this.pendingCommentRange ?? this.currentCommentRange())}`,
       )
       return [
         truncateToWidth(prompt, width, ""),
@@ -327,22 +339,27 @@ export class FileViewerComponent implements Focusable {
     }
 
     if (this.mode === "search") {
+      const visual = this.visualSelection.active ? " · VISUAL LINE" : ""
       return [
-        this.theme.fg("warning", "Search"),
+        this.theme.fg("warning", `Search${visual}`),
         ...this.searchPrompt.render(width),
         this.theme.fg("dim", "enter search · esc clear"),
       ]
     }
 
+    const visualRange = this.visualSelection.range(this.buffer.cursorIndex)
     const position = `${this.selectedLine}/${this.lineCount()}`
-    const help =
-      "j/k move · d/u half page · g/G top/bottom · / search · n/N next/prev · y copy path · enter/c comment · x remove · C clear · alt+/ hide · q close"
+    const status = visualRange
+      ? this.theme.fg(
+          "accent",
+          `VISUAL LINE ${visualRange.startIndex + 1}-${visualRange.endIndex + 1} · ${visualRange.count} selected · cursor ${position}`,
+        )
+      : this.theme.fg("muted", position)
+    const help = visualRange
+      ? "v/esc exit · enter/c comment range · j/k extend · d/u half page · g/G top/bottom · / search · n/N next/prev"
+      : "j/k move · d/u half page · g/G top/bottom · v select · / search · n/N next/prev · y copy path · enter/c comment · x remove · C clear · alt+/ hide · q close"
     return [
-      truncateToWidth(
-        `${this.theme.fg("muted", position)} ${this.theme.fg("dim", help)}`,
-        width,
-        "",
-      ),
+      truncateToWidth(`${status} ${this.theme.fg("dim", help)}`, width, ""),
       this.copyStatus
         ? this.theme.fg("success", this.copyStatus)
         : this.theme.fg(
@@ -352,12 +369,32 @@ export class FileViewerComponent implements Focusable {
     ]
   }
 
-  private startCommentInput(): void {
-    this.mode = "comment"
-    this.commentPrompt.start(
-      this.comments.get(this.selectedLine) ?? "",
-      this.focused,
+  private toggleVisualMode(): void {
+    this.visualSelection.toggle(this.buffer.cursorIndex)
+    this.invalidateAndRender()
+  }
+
+  private exitVisualMode(): void {
+    if (!this.visualSelection.active) return
+    this.visualSelection.exit()
+    this.invalidateAndRender()
+  }
+
+  private isLineSelected(lineNumber: number): boolean {
+    const index = lineNumber - 1
+    return (
+      index === this.buffer.cursorIndex ||
+      this.visualSelection.includes(index, this.buffer.cursorIndex)
     )
+  }
+
+  private startCommentInput(): void {
+    const range = this.currentCommentRange()
+    const existing = this.comments.findExact(this.commentScope(), range)
+    this.pendingCommentRange = range
+    this.visualSelection.exit()
+    this.mode = "comment"
+    this.commentPrompt.start(existing?.text ?? "", this.focused)
     this.invalidateAndRender()
   }
 
@@ -394,20 +431,23 @@ export class FileViewerComponent implements Focusable {
   }
 
   private saveCommentValue(value: string): void {
-    this.comments.save(this.selectedLine, value)
+    const range = this.pendingCommentRange ?? this.currentCommentRange()
+    this.comments.save(this.commentScope(), range, value, undefined)
+    this.pendingCommentRange = undefined
     this.mode = "view"
     this.commentPrompt.stop({ clear: true })
     this.invalidateAndRender()
   }
 
   private cancelCommentInput(): void {
+    this.pendingCommentRange = undefined
     this.mode = "view"
     this.commentPrompt.stop({ clear: true })
     this.invalidateAndRender()
   }
 
   private removeSelectedComment(): void {
-    if (!this.comments.delete(this.selectedLine)) return
+    if (!this.comments.deleteAt(this.commentScope(), this.selectedLine)) return
     this.invalidateAndRender()
   }
 
@@ -436,7 +476,28 @@ export class FileViewerComponent implements Focusable {
   }
 
   private getComments(): ReviewComment[] {
-    return this.comments.entries().map(([line, text]) => ({ line, text }))
+    return this.comments.entries().map((comment) => ({
+      line: comment.start,
+      endLine: comment.end,
+      text: comment.text,
+    }))
+  }
+
+  private currentCommentRange(): LineRange {
+    const visualRange = this.visualSelection.range(this.buffer.cursorIndex)
+    return visualRange
+      ? { start: visualRange.startIndex + 1, end: visualRange.endIndex + 1 }
+      : { start: this.selectedLine, end: this.selectedLine }
+  }
+
+  private formatCommentRange(range: LineRange): string {
+    return range.start === range.end
+      ? `Line ${range.start}`
+      : `Lines ${range.start}-${range.end}`
+  }
+
+  private commentScope(): string {
+    return this.file.id
   }
 
   private moveBy(amount: number): void {

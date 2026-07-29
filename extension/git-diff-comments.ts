@@ -16,9 +16,12 @@ export function formatGitDiffComments(
 
   const lines = ["Review comments for git diff:", ""]
   for (const comment of sorted) {
-    const location = comment.line
-      ? `${comment.path}:${comment.line}${comment.removed ? " (removed)" : ""}`
-      : `${comment.path}:file`
+    const endLine = comment.endLine ?? comment.line
+    const location =
+      comment.location ??
+      (comment.line
+        ? `${comment.path}:${comment.line}${endLine !== comment.line ? `-${endLine}` : ""}${comment.removed ? " (removed)" : ""}`
+        : `${comment.path}:file`)
     lines.push(
       ...formatCommentBlock(location, comment.text, comment.lineContent),
       "",

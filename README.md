@@ -86,9 +86,10 @@ Diff viewer keys:
 - Overview focus: `d` / `u`, `C-d` / `C-u` scrolls the bottom viewer without changing files
 - Overview focus: `/` searches by path, status, or stats, `n` / `N` jumps between matches, `enter` focuses the viewer
 - Viewer focus: `j` / `k`, arrows, `d` / `u`, `g` / `G` move through the current diff or file
-- Viewer focus: `tab` / `shift-tab` changes files
-- Viewer focus: `/` searches, `n` / `N` jumps between matches
-- Viewer focus: `v` toggles diff and final file content
+- Viewer focus: `v` enters or exits visual line mode. Movement highlights the inclusive range from the anchor to the current line. `c` or `enter` comments the whole range. Selecting the exact range again edits its comment. Saving a partially overlapping range replaces the overlapping comment. `Esc` exits visual mode before returning to the overview.
+- Viewer focus: `tab` / `shift-tab` changes files and exits visual line mode
+- Viewer focus: `/` searches, `n` / `N` jumps between matches. Search movement extends an active visual selection.
+- Viewer focus: `t` toggles diff and final file content
 - With `--guide`, the viewer shows a short `Guide #NN:` review cue above the current file diff.
 - `y` copies the current absolute path to the clipboard
 - Viewer focus: `enter` or `c` comments, `x` removes a comment, `C` clears all comments
@@ -103,6 +104,7 @@ File viewer keys:
 - `j` / `k` or arrow keys: move
 - `d` / `u`: half page down/up
 - `g` / `G`: top/bottom
+- `v`: enter or exit visual line mode. Movement highlights the inclusive range from the anchor to the current line. `c` or `enter` comments the whole range. Selecting the exact range again edits its comment. Saving a partially overlapping range replaces the overlapping comment. `Esc` exits visual mode before closing the viewer.
 - `/`: search
 - `n` / `N`: next/previous search match
 - `y`: copy the absolute path to the clipboard

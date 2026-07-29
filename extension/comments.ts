@@ -9,21 +9,26 @@ export function formatReviewComments(
   const lines = [`Review comments for \`${file.path}\`:`, ""]
 
   for (const comment of sorted) {
-    const lineContent = lineContentAt(file.content, comment.line)
-    lines.push(
-      ...formatCommentBlock(
-        `${file.path}:${comment.line}`,
-        comment.text,
-        lineContent,
-      ),
-      "",
-    )
+    const endLine = comment.endLine ?? comment.line
+    const lineContent = lineContentForRange(file.content, comment.line, endLine)
+    const location =
+      comment.line === endLine
+        ? `${file.path}:${comment.line}`
+        : `${file.path}:${comment.line}-${endLine}`
+    lines.push(...formatCommentBlock(location, comment.text, lineContent), "")
   }
   if (sorted.length > 0) lines.pop()
 
   return `${lines.join("\n")}\n`
 }
 
-function lineContentAt(content: string, line: number): string | undefined {
-  return content.split(/\r?\n/)[line - 1]
+function lineContentForRange(
+  content: string,
+  startLine: number,
+  endLine: number,
+): string | undefined {
+  return content
+    .split(/\r?\n/)
+    .slice(startLine - 1, endLine)
+    .join("\n")
 }

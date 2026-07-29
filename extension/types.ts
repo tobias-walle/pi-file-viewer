@@ -20,6 +20,7 @@ export interface ReviewFile {
 
 export interface ReviewComment {
   line: number
+  endLine?: number
   text: string
 }
 
@@ -76,7 +77,9 @@ export interface GitDiffComment {
   fileId: string
   path: string
   line?: number
+  endLine?: number
   removed?: boolean
+  location?: string
   lineContent?: string
   text: string
   order: number

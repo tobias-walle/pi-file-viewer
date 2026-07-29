@@ -19,12 +19,35 @@ test("formats review comments sorted by line", () => {
     ),
   ).toBe(
     "Review comments for `src/file.ts`:\n\n" +
-      "- File: `src/file.ts:2`\n" +
-      "  Snippet: `const earlier = 1`\n" +
-      "  Comment: Earlier\n" +
+      "### `src/file.ts:2`\n\n" +
+      "    const earlier = 1\n\n" +
+      "> Earlier\n" +
       "\n" +
-      "- File: `src/file.ts:10`\n" +
-      "  Snippet: `const later = 2`\n" +
-      "  Comment: Later\n",
+      "### `src/file.ts:10`\n\n" +
+      "    const later = 2\n\n" +
+      "> Later\n",
+  )
+})
+
+test("formats a range comment with all selected lines without truncation", () => {
+  const longMiddleLine = "middle ".repeat(20)
+  expect(
+    formatReviewComments(
+      {
+        id: "file",
+        kind: "file",
+        path: "src/file.ts",
+        content: `first\nsecond\n${longMiddleLine}\nfourth`,
+        createdAt: 1,
+      },
+      [{ line: 2, endLine: 4, text: "Treat this as one block" }],
+    ),
+  ).toBe(
+    "Review comments for `src/file.ts`:\n\n" +
+      "### `src/file.ts:2-4`\n\n" +
+      "    second\n" +
+      `    ${longMiddleLine}\n` +
+      "    fourth\n\n" +
+      "> Treat this as one block\n",
   )
 })

@@ -7,7 +7,6 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui"
 import { copyTextToClipboard } from "./clipboard.js"
-import { CommentStore } from "./comment-store.js"
 import {
   buildDeltaIntralineRangeCache,
   type IntralineRange,
@@ -21,13 +20,13 @@ import {
 } from "./git-diff.js"
 import { formatGitDiffComments } from "./git-diff-comments.js"
 import {
-  buildGitDiffComments,
   diffRowLineNumbers,
   diffRowMarkerKind,
   resolveOverviewAction,
   resolveViewerAction,
 } from "./git-diff-viewer-logic.js"
 import { resolvePath } from "./path.js"
+import { type LineRange, RangeCommentStore } from "./range-comment-store.js"
 import { decorateSearchMatches, stripAnsi } from "./search.js"
 import type {
   DiffRow,
@@ -48,6 +47,7 @@ import {
 import { isHideViewer } from "./ui/keys.js"
 import { type BufferLine, LineBuffer } from "./ui/line-buffer.js"
 import { TextPrompt } from "./ui/text-prompt.js"
+import { VisualLineSelection } from "./ui/visual-line-selection.js"
 import { highlightForPath } from "./utils/markdown-highlight.js"
 
 const OVERLAY_OPTIONS = {
@@ -171,6 +171,8 @@ interface PreparedDiffRows {
   intralineRangesByIndex: IntralineRange[][]
 }
 
+type GitCommentMetadata = Omit<GitDiffComment, "text">
+
 export async function openGitDiffViewer(
   ctx: ExtensionContext,
   options: GitDiffViewOptions = { scope: "all" },
@@ -254,6 +256,7 @@ class GitDiffViewerComponent {
   private inputMode: InputMode = "normal"
   private overviewBuffer = new LineBuffer<GitChangedFile>()
   private viewerBuffer = new LineBuffer<DiffRow>()
+  private visualSelection = new VisualLineSelection()
   private viewMode: ViewMode = "diff"
   private filterPrompt = new TextPrompt({
     onSubmit: (value) => this.applyFilter(value),
@@ -275,8 +278,12 @@ class GitDiffViewerComponent {
     | { key: string; sourceLine: number; cursorIndex: number }
     | undefined
   private requestId = 0
-  private comments = new CommentStore<string>()
-  private commentLineContent = new Map<string, string>()
+  private comments = new RangeCommentStore<GitCommentMetadata>()
+  private pendingComment?: {
+    scope: string
+    range: LineRange
+    metadata: GitCommentMetadata
+  }
   private copyStatus = ""
   private cached?: { width: number; lines: string[] }
   private spinner?: NodeJS.Timeout
@@ -574,7 +581,7 @@ class GitDiffViewerComponent {
     const lines = [
       this.renderHeader(
         file.path,
-        `${this.viewMode} ${this.selectedFile + 1}/${this.filteredFiles().length} ${stripAnsi(this.renderStats(file))} ${this.commentsForFile(file.id)} comments`,
+        `${this.visualSelection.active ? "VISUAL LINE " : ""}${this.viewMode} ${this.selectedFile + 1}/${this.filteredFiles().length} ${stripAnsi(this.renderStats(file))} ${this.commentsForFile(file.id)} comments`,
       ),
       this.separatorLine(width),
     ]
@@ -627,7 +634,8 @@ class GitDiffViewerComponent {
     width: number,
   ): string[] {
     const index = rowIndex + 1
-    const selected = this.focus === "viewer" && index === this.viewerLine
+    const active = this.focus === "viewer" && index === this.viewerLine
+    const selected = this.isViewerRowSelected(rowIndex)
     if (row.kind === "card") {
       const text =
         index === 1
@@ -637,10 +645,13 @@ class GitDiffViewerComponent {
             : ""
       return [selected ? this.fillSelected(text, width) : text]
     }
-    const commentKey = this.commentKey(file, row)
-    const marker = this.renderDiffMarker(row, this.comments.has(commentKey))
+    const marker = this.renderDiffMarker(
+      row,
+      this.comments.hasAt(this.commentScope(file), index),
+    )
+    const cursor = active ? this.theme.fg("accent", ">") : " "
     const { oldText, newText } = diffRowLineNumbers(row, numberWidth)
-    const gutter = `${marker} ${this.theme.fg("muted", oldText)} ${this.theme.fg("muted", newText)} │ `
+    const gutter = `${cursor}${marker} ${this.theme.fg("muted", oldText)} ${this.theme.fg("muted", newText)} │ `
     const rowBg = this.diffRowBg(row)
     const content = this.decorateRow(prepared, row, rowIndex, rowBg)
     const restoreBg = selected
@@ -661,6 +672,14 @@ class GitDiffViewerComponent {
         rowBg,
       )
     })
+  }
+
+  private isViewerRowSelected(rowIndex: number): boolean {
+    if (this.focus !== "viewer") return false
+    return (
+      rowIndex === this.viewerBuffer.cursorIndex ||
+      this.visualSelection.includes(rowIndex, this.viewerBuffer.cursorIndex)
+    )
   }
 
   private renderDiffMarker(row: DiffRow, hasComment: boolean): string {
@@ -701,20 +720,39 @@ class GitDiffViewerComponent {
       ]
     if (this.inputMode === "search")
       return [
-        this.theme.fg("warning", `Search ${file.path}`),
+        this.theme.fg(
+          "warning",
+          `Search ${file.path}${this.visualSelection.active ? " · VISUAL LINE" : ""}`,
+        ),
         ...this.searchPrompt.render(width),
         this.theme.fg("dim", "enter search · esc clear"),
       ]
     if (this.inputMode === "comment")
       return [
-        this.theme.fg("warning", `Comment ${this.commentLocation(file)}`),
+        this.theme.fg(
+          "warning",
+          `Comment ${this.pendingComment?.metadata.location ?? file.path}`,
+        ),
         ...this.commentPrompt.render(width),
         this.theme.fg("dim", "enter save · esc cancel"),
       ]
-    const toggleHint = this.viewMode === "diff" ? "v file" : "v diff"
+    const visualRange = this.visualSelection.range(
+      this.viewerBuffer.cursorIndex,
+    )
+    if (this.focus === "viewer" && visualRange) {
+      const status = `VISUAL LINE rows ${visualRange.startIndex + 1}-${visualRange.endIndex + 1} · ${visualRange.count} selected · cursor ${this.viewerLine}/${this.viewerBuffer.length}`
+      const help =
+        "v/esc exit  c comment range  j/k extend  d/u half page  g/G top/bottom  / search  n/N next/prev"
+      const suffix = this.copyStatus || help
+      return [
+        `${this.theme.fg("accent", status)} ${this.theme.fg(this.copyStatus ? "success" : "dim", suffix)}`,
+      ]
+    }
+
+    const toggleHint = this.viewMode === "diff" ? "t file" : "t diff"
     const help =
       this.focus === "viewer"
-        ? ` j/k move  d/u half page  g/G top/bottom  tab next  shift-tab prev  / search  ${toggleHint}  y copy path  c comment  alt+/ hide  q close `
+        ? ` j/k move  d/u half page  g/G top/bottom  v select  tab next  shift-tab prev  / search  ${toggleHint}  y copy path  c comment  alt+/ hide  q close `
         : " j/k files  d/u scroll viewer  / filter  n/N next/prev  y copy path  enter focus viewer  alt+/ hide  q close "
     return [
       this.theme.fg(
@@ -757,6 +795,7 @@ class GitDiffViewerComponent {
     const rows = this.currentRows()
     const action = resolveViewerAction(data, {
       hasSearch: this.viewerBuffer.hasSearch(),
+      visualMode: this.visualSelection.active,
       half: Math.max(1, Math.floor(this.viewerHeight() / 2)),
       lastLine: rows.length,
     })
@@ -767,24 +806,43 @@ class GitDiffViewerComponent {
     action: ReturnType<typeof resolveViewerAction>,
     rows: DiffRow[],
   ): void {
+    if (this.runViewerMovementAction(action, rows)) return
+
     if (action.type === "close") this.close()
     else if (action.type === "clearSearch") this.cancelSearch()
     else if (action.type === "focusOverview") this.focus = "overview"
     else if (action.type === "selectFile")
       this.selectFile(this.selectedFile + action.delta, this.filteredFiles())
-    else if (action.type === "moveViewer")
+    else if (action.type === "startSearch") this.startSearch()
+    else if (action.type === "visualMode") this.runVisualAction(action.action)
+    else if (action.type === "toggleViewMode") this.toggleViewMode()
+    else if (action.type === "startComment") {
+      this.startComment()
+    } else if (action.type === "removeComment") {
+      this.exitVisualMode()
+      this.removeComment()
+    } else if (action.type === "clearComments") this.clearComments()
+    else if (action.type === "copyPath") this.copyCurrentPath()
+  }
+
+  private runViewerMovementAction(
+    action: ReturnType<typeof resolveViewerAction>,
+    rows: DiffRow[],
+  ): boolean {
+    if (action.type === "moveViewer")
       this.moveViewer(this.viewerLine + action.delta, rows)
     else if (action.type === "moveViewerPage")
       this.scrollViewerPage(action.delta, rows)
     else if (action.type === "moveViewerAbsolute")
       this.moveViewer(action.line, rows)
-    else if (action.type === "startSearch") this.startSearch()
     else if (action.type === "moveSearch") this.moveSearch(action.delta)
-    else if (action.type === "toggleViewMode") this.toggleViewMode()
-    else if (action.type === "startComment") this.startComment()
-    else if (action.type === "removeComment") this.removeComment()
-    else if (action.type === "clearComments") this.clearComments()
-    else if (action.type === "copyPath") this.copyCurrentPath()
+    else return false
+    return true
+  }
+
+  private runVisualAction(action: "toggle" | "exit"): void {
+    if (action === "toggle") this.toggleVisualMode()
+    else this.exitVisualMode()
   }
 
   private ensureCurrentLoaded(): void {
@@ -903,6 +961,7 @@ class GitDiffViewerComponent {
 
   private setViewerLines(lines: BufferLine<DiffRow>[]): void {
     if (this.viewerBuffer.lines !== lines) this.viewerBuffer.setLines(lines)
+    this.visualSelection.clamp(lines.length)
   }
 
   private setCurrentViewerRows(rows: DiffRow[]): void {
@@ -948,6 +1007,7 @@ class GitDiffViewerComponent {
 
   private selectFile(index: number, files: GitChangedFile[]): void {
     if (files.length === 0) return
+    this.exitVisualMode()
     this.saveViewerPosition()
     this.selectedFile = (index + files.length) % files.length
     this.restoreViewerPosition()
@@ -1016,7 +1076,23 @@ class GitDiffViewerComponent {
     }
   }
 
+  private toggleVisualMode(): void {
+    const file = this.currentFile()
+    if (
+      !file ||
+      this.getLoadState(file).status !== "loaded" ||
+      this.viewerBuffer.length === 0
+    )
+      return
+    this.visualSelection.toggle(this.viewerBuffer.cursorIndex)
+  }
+
+  private exitVisualMode(): void {
+    this.visualSelection.exit()
+  }
+
   private toggleViewMode(): void {
+    this.exitVisualMode()
     const focusedLine = this.getFocusedSourceLine()
     this.saveViewerPosition()
     this.viewMode = this.viewMode === "diff" ? "file" : "diff"
@@ -1158,21 +1234,25 @@ class GitDiffViewerComponent {
 
   private startComment(): void {
     const file = this.currentFile()
-    const row = this.currentRows()[this.viewerLine - 1]
-    if (!file || !row) return
-    const key = this.commentKey(file, row)
+    const rows = this.currentRows()
+    if (!file || rows.length === 0) return
+
+    const range = this.currentCommentRange()
+    const scope = this.commentScope(file)
+    const metadata = this.gitCommentMetadata(file, rows, range)
+    const existing = this.comments.findExact(scope, range)
+    this.pendingComment = { scope, range, metadata }
+    this.exitVisualMode()
     this.inputMode = "comment"
-    this.commentPrompt.start(this.comments.get(key) ?? "")
+    this.commentPrompt.start(existing?.text ?? "")
   }
 
   private saveComment(value: string): void {
-    const file = this.currentFile()
-    const row = this.currentRows()[this.viewerLine - 1]
-    if (!file || !row) return
-    const key = this.commentKey(file, row)
-    this.comments.save(key, value)
-    if (value.trim()) this.commentLineContent.set(key, this.commentLine(row))
-    else this.commentLineContent.delete(key)
+    if (this.pendingComment) {
+      const { scope, range, metadata } = this.pendingComment
+      this.comments.save(scope, range, value, metadata)
+    }
+    this.pendingComment = undefined
     this.inputMode = "normal"
     this.commentPrompt.stop()
   }
@@ -1184,44 +1264,85 @@ class GitDiffViewerComponent {
   }
 
   private cancelComment(): void {
+    this.pendingComment = undefined
     this.inputMode = "normal"
     this.commentPrompt.stop({ clear: true })
   }
   private removeComment(): void {
     const file = this.currentFile()
-    const row = this.currentRows()[this.viewerLine - 1]
-    if (!file || !row) return
-    const key = this.commentKey(file, row)
-    this.comments.delete(key)
-    this.commentLineContent.delete(key)
+    if (!file) return
+    this.comments.deleteAt(this.commentScope(file), this.viewerLine)
   }
   private clearComments(): void {
     this.comments.clear()
-    this.commentLineContent.clear()
   }
 
-  private commentKey(file: GitChangedFile, row: DiffRow): string {
-    if (row.kind === "card") return `${file.id}\tfile\t0`
-    if (row.removed && row.oldLine) return `${file.id}\told\t${row.oldLine}`
-    if (row.newLine) return `${file.id}\tnew\t${row.newLine}`
-    return `${file.id}\trow\t${this.viewerLine}`
+  private currentCommentRange(): LineRange {
+    const visualRange = this.visualSelection.range(
+      this.viewerBuffer.cursorIndex,
+    )
+    return visualRange
+      ? { start: visualRange.startIndex + 1, end: visualRange.endIndex + 1 }
+      : { start: this.viewerLine, end: this.viewerLine }
   }
 
-  private commentLocation(file: GitChangedFile): string {
-    const row = this.currentRows()[this.viewerLine - 1]
-    if (!row) return `${file.path}:file`
-    if (row.removed && row.oldLine) return `${file.path}:${row.oldLine}`
-    if (row.newLine) return `${file.path}:${row.newLine}`
-    return `${file.path}:file`
+  private commentScope(file: GitChangedFile): string {
+    return `${file.id}:${this.viewMode}`
+  }
+
+  private gitCommentMetadata(
+    file: GitChangedFile,
+    rows: DiffRow[],
+    range: LineRange,
+  ): GitCommentMetadata {
+    const selectedRows = rows.slice(range.start - 1, range.end)
+    const locations = selectedRows
+      .map((row) => this.gitRowLocation(row))
+      .filter((location) => location !== undefined)
+    const first = locations[0]
+    const last = locations.at(-1)
+    const location = this.gitRangeLocation(file, first, last)
+    return {
+      fileId: file.id,
+      path: file.path,
+      line: first?.line,
+      endLine: last?.line,
+      removed: first?.removed && last?.removed,
+      location,
+      lineContent: selectedRows.map((row) => this.commentLine(row)).join("\n"),
+      order: first?.line ?? Number.MAX_SAFE_INTEGER,
+    }
+  }
+
+  private gitRowLocation(
+    row: DiffRow,
+  ): { line: number; removed: boolean } | undefined {
+    if (row.removed && row.oldLine) return { line: row.oldLine, removed: true }
+    if (row.newLine) return { line: row.newLine, removed: false }
+    if (row.oldLine) return { line: row.oldLine, removed: true }
+    return undefined
+  }
+
+  private gitRangeLocation(
+    file: GitChangedFile,
+    first: { line: number; removed: boolean } | undefined,
+    last: { line: number; removed: boolean } | undefined,
+  ): string {
+    if (!first || !last) return `${file.path}:file`
+    if (first.line === last.line && first.removed === last.removed)
+      return `${file.path}:${first.line}${first.removed ? " (removed)" : ""}`
+    if (first.removed === last.removed)
+      return `${file.path}:${first.line}-${last.line}${first.removed ? " (removed)" : ""}`
+    const startSide = first.removed ? "old" : "new"
+    const endSide = last.removed ? "old" : "new"
+    return `${file.path}:${startSide} ${first.line}-${endSide} ${last.line}`
   }
 
   private getComments(): GitDiffComment[] {
-    const files = this.state.status === "loaded" ? this.state.files : []
-    return buildGitDiffComments(
-      files,
-      this.comments.asReadonlyMap(),
-      this.commentLineContent,
-    )
+    return this.comments.entries().map((comment) => ({
+      ...comment.metadata,
+      text: comment.text,
+    }))
   }
 
   private close(): void {
@@ -1251,8 +1372,9 @@ class GitDiffViewerComponent {
     return `${this.theme.fg("error", `-${file.removed}`)} ${this.theme.fg("success", `+${file.added}`)}`
   }
   private commentsForFile(fileId: string): number {
-    return this.comments.keys().filter((key) => key.startsWith(`${fileId}\t`))
-      .length
+    return this.comments
+      .entries()
+      .filter((comment) => comment.metadata.fileId === fileId).length
   }
   private overviewHeight(): number {
     return this.layout().overviewBodyHeight

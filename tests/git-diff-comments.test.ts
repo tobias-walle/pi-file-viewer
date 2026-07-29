@@ -34,12 +34,37 @@ test("formats git diff comments with line content", () => {
     ]),
   ).toBe(
     "Review comments for git diff:\n\n" +
-      "- File: `src/file.ts:4 (removed)`\n" +
-      "  Snippet: `-oldValue()`\n" +
-      "  Comment: Remove safely\n" +
+      "### `src/file.ts:4 (removed)`\n\n" +
+      "    -oldValue()\n\n" +
+      "> Remove safely\n" +
       "\n" +
-      "- File: `src/file.ts:12`\n" +
-      "  Snippet: `+const value = 1`\n" +
-      "  Comment: Fix naming\n",
+      "### `src/file.ts:12`\n\n" +
+      "    +const value = 1\n\n" +
+      "> Fix naming\n",
+  )
+})
+
+test("formats git diff range comments", () => {
+  expect(
+    formatGitDiffComments(files, [
+      {
+        fileId: "file",
+        path: "src/file.ts",
+        line: 12,
+        endLine: 14,
+        location: "src/file.ts:12-14",
+        lineContent: "+first\n+second\n+third",
+        text: "Keep these lines together\nDo not split them",
+        order: 12,
+      },
+    ]),
+  ).toBe(
+    "Review comments for git diff:\n\n" +
+      "### `src/file.ts:12-14`\n\n" +
+      "    +first\n" +
+      "    +second\n" +
+      "    +third\n\n" +
+      "> Keep these lines together\n" +
+      "> Do not split them\n",
   )
 })
