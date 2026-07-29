@@ -22,8 +22,10 @@ import { formatGitDiffComments } from "./git-diff-comments.js"
 import {
   diffRowLineNumbers,
   diffRowMarkerKind,
+  findRowForSourceLine,
   resolveOverviewAction,
   resolveViewerAction,
+  sourceLineAtRow,
 } from "./git-diff-viewer-logic.js"
 import { resolvePath } from "./path.js"
 import { type LineRange, RangeCommentStore } from "./range-comment-store.js"
@@ -1117,8 +1119,7 @@ class GitDiffViewerComponent {
       return anchor.sourceLine
     }
 
-    const row = this.currentRows()[this.viewerLine - 1]
-    return row?.newLine ?? row?.oldLine
+    return sourceLineAtRow(this.currentRows(), this.viewerLine - 1)
   }
 
   private applyPendingViewerLine(rows: DiffRow[], visibleHeight: number): void {
@@ -1128,7 +1129,7 @@ class GitDiffViewerComponent {
     const line = this.pendingViewerLines.get(key)
     if (line === undefined) return
 
-    const match = this.findRowIndexForSourceLine(rows, line)
+    const match = findRowForSourceLine(rows, line)
     if (!match) return
 
     this.pendingViewerLines.delete(key)
@@ -1137,34 +1138,6 @@ class GitDiffViewerComponent {
     this.viewerLineAnchor = match.exact
       ? undefined
       : { key, sourceLine: line, cursorIndex: match.index }
-  }
-
-  private findRowIndexForSourceLine(
-    rows: DiffRow[],
-    line: number,
-  ): { index: number; exact: boolean } | undefined {
-    const exactIndex = rows.findIndex((row) =>
-      this.viewMode === "file"
-        ? row.newLine === line || row.oldLine === line
-        : row.newLine === line || row.oldLine === line,
-    )
-    if (exactIndex >= 0) return { index: exactIndex, exact: true }
-
-    const nextIndex = rows.findIndex((row) => {
-      const rowLine = row.newLine ?? row.oldLine
-      return rowLine !== undefined && rowLine > line
-    })
-    if (nextIndex >= 0) return { index: nextIndex, exact: false }
-
-    const previousIndex = findLastIndex(rows, (row) => {
-      const rowLine = row.newLine ?? row.oldLine
-      return rowLine !== undefined && rowLine < line
-    })
-    if (previousIndex >= 0) return { index: previousIndex, exact: false }
-
-    return rows.length > 0
-      ? { index: rows.length - 1, exact: false }
-      : undefined
   }
 
   private clearViewerLineAnchor(): void {
@@ -1479,14 +1452,6 @@ class GitDiffViewerComponent {
     if (this.spinner) clearInterval(this.spinner)
     this.spinner = undefined
   }
-}
-
-function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
-  for (let index = items.length - 1; index >= 0; index--) {
-    const item = items[index]
-    if (item !== undefined && predicate(item)) return index
-  }
-  return -1
 }
 
 function clamp(value: number, min: number, max: number): number {

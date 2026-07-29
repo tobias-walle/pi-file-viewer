@@ -227,6 +227,49 @@ function isCommentKey(data: string): boolean {
   return data === "c" || matchesKey(data, "enter")
 }
 
+export function sourceLineAtRow(
+  rows: readonly DiffRow[],
+  rowIndex: number,
+): number | undefined {
+  const sourceLine = (row: DiffRow | undefined) => row?.newLine ?? row?.oldLine
+  const currentLine = sourceLine(rows[rowIndex])
+  if (currentLine !== undefined) return currentLine
+
+  for (let distance = 1; distance < rows.length; distance++) {
+    const nextLine = sourceLine(rows[rowIndex + distance])
+    if (nextLine !== undefined) return nextLine
+
+    const previousLine = sourceLine(rows[rowIndex - distance])
+    if (previousLine !== undefined) return previousLine
+  }
+
+  return undefined
+}
+
+export function findRowForSourceLine(
+  rows: readonly DiffRow[],
+  line: number,
+): { index: number; exact: boolean } | undefined {
+  const exactIndex = rows.findIndex(
+    (row) => row.newLine === line || row.oldLine === line,
+  )
+  if (exactIndex >= 0) return { index: exactIndex, exact: true }
+
+  const nextIndex = rows.findIndex((row) => {
+    const rowLine = row.newLine ?? row.oldLine
+    return rowLine !== undefined && rowLine > line
+  })
+  if (nextIndex >= 0) return { index: nextIndex, exact: false }
+
+  for (let index = rows.length - 1; index >= 0; index--) {
+    const row = rows[index]
+    const rowLine = row?.newLine ?? row?.oldLine
+    if (rowLine !== undefined && rowLine < line) return { index, exact: false }
+  }
+
+  return undefined
+}
+
 export function diffRowMarkerKind(
   row: DiffRow,
   hasComment: boolean,

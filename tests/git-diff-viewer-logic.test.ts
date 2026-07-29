@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test"
 import { calculateGitDiffViewerLayout } from "../extension/git-diff-viewer.js"
 import {
+  findRowForSourceLine,
   resolveOverviewAction,
   resolveViewerAction,
+  sourceLineAtRow,
 } from "../extension/git-diff-viewer-logic.js"
+import type { DiffRow } from "../extension/types.js"
 
 test("viewer d/u keys move by half pages", () => {
   expect(
@@ -37,6 +40,39 @@ test("viewer v toggles visual mode and t toggles diff/file view", () => {
     action: "toggle",
   })
   expect(resolveViewerAction("t", options)).toEqual({ type: "toggleViewMode" })
+})
+
+test("mode switching anchors hunk rows to the following source line", () => {
+  const rows: DiffRow[] = [
+    { kind: "context", text: "before", oldLine: 9, newLine: 9 },
+    { kind: "hunk", text: "@@ -20,1 +20,1 @@" },
+    { kind: "removed", text: "old", oldLine: 20 },
+    { kind: "added", text: "new", newLine: 20 },
+  ]
+
+  expect(sourceLineAtRow(rows, 1)).toBe(20)
+  expect(sourceLineAtRow(rows, 2)).toBe(20)
+})
+
+test("loading placeholders do not consume mode switch anchors", () => {
+  const loadingRows: DiffRow[] = [
+    { kind: "card", text: "Loading", message: "Please wait." },
+  ]
+
+  expect(findRowForSourceLine(loadingRows, 42)).toBeUndefined()
+  expect(
+    findRowForSourceLine([{ kind: "file", text: "line 42", newLine: 42 }], 42),
+  ).toEqual({ index: 0, exact: true })
+})
+
+test("mode switching falls back to the preceding source line", () => {
+  const rows: DiffRow[] = [
+    { kind: "file", text: "last line", newLine: 42 },
+    { kind: "hunk", text: "metadata" },
+  ]
+
+  expect(sourceLineAtRow(rows, 1)).toBe(42)
+  expect(sourceLineAtRow([{ kind: "card", text: "empty" }], 0)).toBeUndefined()
 })
 
 test("viewer escape exits visual mode before clearing search or changing focus", () => {
