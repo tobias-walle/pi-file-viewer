@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { calculateGitDiffViewerLayout } from "../extension/git-diff-viewer.js"
 import {
+  fileChangeMarker,
   findRowForSourceLine,
   resolveOverviewAction,
   resolveViewerAction,
@@ -73,6 +74,26 @@ test("mode switching falls back to the preceding source line", () => {
 
   expect(sourceLineAtRow(rows, 1)).toBe(42)
   expect(sourceLineAtRow([{ kind: "card", text: "empty" }], 0)).toBeUndefined()
+})
+
+test("file mode prefers line changes over deletion markers", () => {
+  expect(
+    fileChangeMarker({ kind: "file", text: "added", changeKind: "added" }),
+  ).toEqual({ color: "success", text: "▎" })
+  expect(
+    fileChangeMarker({
+      kind: "file",
+      text: "changed",
+      changeKind: "changed",
+    }),
+  ).toEqual({ color: "warning", text: "▎" })
+  expect(
+    fileChangeMarker({
+      kind: "file",
+      text: "deleted",
+      deletionMarker: "after",
+    }),
+  ).toEqual({ color: "error", text: "▁" })
 })
 
 test("viewer escape exits visual mode before clearing search or changing focus", () => {

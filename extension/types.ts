@@ -59,6 +59,8 @@ export type DiffRowKind =
 export interface DiffRow {
   kind: DiffRowKind
   text: string
+  changeKind?: "added" | "changed" | "removed"
+  deletionMarker?: "before" | "after"
   oldLine?: number
   newLine?: number
   removed?: boolean

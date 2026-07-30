@@ -22,6 +22,7 @@ import { formatGitDiffComments } from "./git-diff-comments.js"
 import {
   diffRowLineNumbers,
   diffRowMarkerKind,
+  fileChangeMarker,
   findRowForSourceLine,
   resolveOverviewAction,
   resolveViewerAction,
@@ -687,10 +688,16 @@ class GitDiffViewerComponent {
   private renderDiffMarker(row: DiffRow, hasComment: boolean): string {
     const markerKind = diffRowMarkerKind(row, hasComment)
     if (markerKind === "comment") return this.theme.fg("warning", "●")
+    if (row.kind === "file") return this.renderFileChangeMarker(row)
     if (markerKind === "added") return "+"
     if (markerKind === "removed") return "-"
     if (markerKind === "hunk") return this.theme.fg("accent", "@")
     return " "
+  }
+
+  private renderFileChangeMarker(row: DiffRow): string {
+    const marker = fileChangeMarker(row)
+    return marker ? this.theme.fg(marker.color, marker.text) : " "
   }
 
   private renderGuideLines(
@@ -854,14 +861,23 @@ class GitDiffViewerComponent {
     const requestId = ++this.requestId
     this.cache.set(key, { status: "loading" })
     this.startSpinner()
-    const loader = this.viewMode === "diff" ? loadGitDiffRows : loadGitFileRows
     if (this.state.status !== "loaded") return
-    void loader(
-      file,
-      this.state.root,
-      this.state.base,
-      this.options.scope,
-    ).then(
+    const loadRows =
+      this.viewMode === "diff"
+        ? loadGitDiffRows(
+            file,
+            this.state.root,
+            this.state.base,
+            this.options.scope,
+          )
+        : loadGitFileRows(
+            file,
+            this.state.root,
+            this.state.base,
+            this.options.scope,
+            this.cachedDiffRows(file),
+          )
+    void loadRows.then(
       (result) => {
         if (requestId > this.requestId) return
         this.preparedRows(file, result.rows)
@@ -894,6 +910,11 @@ class GitDiffViewerComponent {
 
   private getLoadState(file: GitChangedFile): LoadState {
     return this.cache.get(this.cacheKey(file)) ?? { status: "idle" }
+  }
+
+  private cachedDiffRows(file: GitChangedFile): DiffRow[] | undefined {
+    const state = this.cache.get(`${file.id}:diff`)
+    return state?.status === "loaded" ? state.rows : undefined
   }
 
   private cacheKey(file: GitChangedFile): string {

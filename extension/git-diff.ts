@@ -176,24 +176,28 @@ export async function loadGitFileRows(
   root: string,
   base: string,
   scope: GitDiffScope = "all",
+  diffRows?: readonly DiffRow[],
 ): Promise<GitDiffLoadResult> {
   if (file.large) return largeResult(file)
   if (file.binary) return binaryResult(file)
 
   try {
+    const path = file.oldPath ?? file.path
     const content =
       file.status === "D"
-        ? await git(["show", `${base}:${file.oldPath ?? file.path}`], root)
+        ? await git(
+            ["show", scope === "unstaged" ? `:${path}` : `${base}:${path}`],
+            root,
+          )
         : scope === "staged"
           ? await git(["show", `:${file.path}`], root)
           : await readFileWithLimit(join(root, file.path))
-    const rows = content.split("\n").map((text, index) => ({
-      kind: "file" as const,
-      text,
-      newLine: index + 1,
-      commentKey: `${file.path}:new:${index + 1}`,
-    }))
-    if (rows.length > 0 && rows[rows.length - 1]?.text === "") rows.pop()
+    const sourceRows =
+      diffRows ??
+      (file.status === "??"
+        ? []
+        : (await loadGitDiffRows(file, root, base, scope)).rows)
+    const rows = buildFileRows(content, file, sourceRows)
     return {
       status: "ok",
       rows: rows.length
@@ -217,6 +221,127 @@ export async function loadGitFileRows(
       ),
     }
   }
+}
+
+export function buildFileRows(
+  content: string,
+  file: GitChangedFile,
+  diffRows: readonly DiffRow[],
+): DiffRow[] {
+  const lines = content.split("\n")
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop()
+
+  const changes =
+    file.status === "D"
+      ? new Map(lines.map((_, index) => [index + 1, "removed" as const]))
+      : file.status === "??"
+        ? new Map(lines.map((_, index) => [index + 1, "added" as const]))
+        : collectFileLineChanges(diffRows)
+  const deletionMarkers =
+    file.status === "D"
+      ? new Map<number, "before" | "after">()
+      : collectDeletionMarkers(diffRows)
+
+  return lines.map((text, index) => {
+    const line = index + 1
+    const deleted = file.status === "D"
+    return {
+      kind: "file",
+      text,
+      changeKind: changes.get(line),
+      deletionMarker: deletionMarkers.get(line),
+      oldLine: deleted ? line : undefined,
+      newLine: deleted ? undefined : line,
+      removed: deleted || undefined,
+      commentKey: `${file.path}:${deleted ? "old" : "new"}:${line}`,
+    }
+  })
+}
+
+interface FileChangeBlock {
+  startIndex: number
+  endIndex: number
+  removed: DiffRow[]
+  added: DiffRow[]
+}
+
+function collectFileChangeBlocks(rows: readonly DiffRow[]): FileChangeBlock[] {
+  const blocks: FileChangeBlock[] = []
+  let index = 0
+
+  while (index < rows.length) {
+    if (rows[index]?.kind !== "removed" && rows[index]?.kind !== "added") {
+      index++
+      continue
+    }
+
+    const startIndex = index
+    const removed: DiffRow[] = []
+    const added: DiffRow[] = []
+    while (rows[index]?.kind === "removed") {
+      removed.push(rows[index] as DiffRow)
+      index++
+    }
+    while (rows[index]?.kind === "added") {
+      added.push(rows[index] as DiffRow)
+      index++
+    }
+    blocks.push({ startIndex, endIndex: index, removed, added })
+  }
+
+  return blocks
+}
+
+function collectFileLineChanges(
+  rows: readonly DiffRow[],
+): Map<number, "added" | "changed"> {
+  const changes = new Map<number, "added" | "changed">()
+
+  for (const block of collectFileChangeBlocks(rows)) {
+    const changedCount = Math.min(block.removed.length, block.added.length)
+    block.added.forEach((row, index) => {
+      if (row.newLine !== undefined)
+        changes.set(row.newLine, index < changedCount ? "changed" : "added")
+    })
+  }
+
+  return changes
+}
+
+function collectDeletionMarkers(
+  rows: readonly DiffRow[],
+): Map<number, "before" | "after"> {
+  const markers = new Map<number, "before" | "after">()
+
+  for (const block of collectFileChangeBlocks(rows)) {
+    const marker = deletionMarkerForBlock(rows, block)
+    if (marker) markers.set(marker.line, marker.position)
+  }
+
+  return markers
+}
+
+function deletionMarkerForBlock(
+  rows: readonly DiffRow[],
+  block: FileChangeBlock,
+): { line: number; position: "before" | "after" } | undefined {
+  if (block.removed.length === 0 || block.added.length > 0) return undefined
+
+  const previousLine = rows
+    .slice(0, block.startIndex)
+    .findLast((row) => row.newLine !== undefined)?.newLine
+  if (previousLine !== undefined)
+    return { line: previousLine, position: "after" }
+
+  const nextLine = rows
+    .slice(block.endIndex)
+    .find((row) => row.newLine !== undefined)?.newLine
+  if (nextLine !== undefined) return { line: nextLine, position: "before" }
+
+  const firstAddedLine = block.added[0]?.newLine
+  return firstAddedLine === undefined
+    ? undefined
+    : { line: firstAddedLine, position: "before" }
 }
 
 function nameStatusArgs(base: string, scope: GitDiffScope): string[] {

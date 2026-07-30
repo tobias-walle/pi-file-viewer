@@ -270,6 +270,16 @@ export function findRowForSourceLine(
   return undefined
 }
 
+export function fileChangeMarker(
+  row: DiffRow,
+): { color: "success" | "warning" | "error"; text: string } | undefined {
+  if (row.changeKind === "added") return { color: "success", text: "▎" }
+  if (row.changeKind === "changed") return { color: "warning", text: "▎" }
+  if (row.changeKind === "removed") return { color: "error", text: "▎" }
+  if (row.deletionMarker) return { color: "error", text: "▁" }
+  return undefined
+}
+
 export function diffRowMarkerKind(
   row: DiffRow,
   hasComment: boolean,
