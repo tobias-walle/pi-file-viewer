@@ -26,6 +26,7 @@ import {
   findRowForSourceLine,
   resolveOverviewAction,
   resolveViewerAction,
+  scrollOffsetForVisibleRow,
   sourceLineAtRow,
 } from "./git-diff-viewer-logic.js"
 import { resolvePath } from "./path.js"
@@ -602,16 +603,13 @@ class GitDiffViewerComponent {
     this.applyPendingViewerLine(rows, bodyHeight)
     this.ensureViewerVisible(rows, bodyHeight)
     const numberWidth = prepared.numberWidth
-    let rowIndex = this.viewerScroll
-    while (lines.length < bodyEnd) {
+    const renderedRowsByIndex = new Map<number, string[]>()
+    const renderedRowsAt = (rowIndex: number): string[] => {
+      const cached = renderedRowsByIndex.get(rowIndex)
+      if (cached) return cached
       const row = rows[rowIndex]
-      if (!row) {
-        lines.push("")
-        rowIndex++
-        continue
-      }
-
-      const renderedRows = this.renderDiffRow(
+      if (!row) return [""]
+      const rendered = this.renderDiffRow(
         file,
         prepared,
         row,
@@ -619,6 +617,19 @@ class GitDiffViewerComponent {
         numberWidth,
         width,
       )
+      renderedRowsByIndex.set(rowIndex, rendered)
+      return rendered
+    }
+    this.viewerScroll = scrollOffsetForVisibleRow(
+      this.viewerLine - 1,
+      this.viewerScroll,
+      bodyHeight,
+      (rowIndex) => renderedRowsAt(rowIndex).length,
+    )
+
+    let rowIndex = this.viewerScroll
+    while (lines.length < bodyEnd) {
+      const renderedRows = renderedRowsAt(rowIndex)
       lines.push(...renderedRows.slice(0, bodyEnd - lines.length))
       rowIndex++
     }

@@ -9,9 +9,18 @@ export function highlightForPath(
   path: string | undefined,
   theme: Theme,
 ): string[] {
+  const displayContent = normalizeDisplayContent(content)
   const language = path ? getLanguageFromPath(path) : undefined
-  if (language === "markdown") return highlightMarkdown(content, theme)
-  return highlightCode(content, language)
+  if (language === "markdown") return highlightMarkdown(displayContent, theme)
+  return highlightCode(displayContent, language)
+}
+
+function normalizeDisplayContent(content: string): string {
+  return content
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
 }
 
 export function highlightMarkdown(content: string, theme: Theme): string[] {

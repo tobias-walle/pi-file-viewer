@@ -35,3 +35,9 @@ test("uses markdown highlighting for markdown paths", () => {
     "<mdHeading><bold># Title</bold></mdHeading>",
   )
 })
+
+test("normalizes line endings and trailing whitespace before highlighting", () => {
+  expect(
+    highlightForPath("first  \r\nsecond\t \rthird", "README.md", theme),
+  ).toEqual(["first", "second", "third"])
+})

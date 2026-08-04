@@ -5,6 +5,7 @@ import {
   findRowForSourceLine,
   resolveOverviewAction,
   resolveViewerAction,
+  scrollOffsetForVisibleRow,
   sourceLineAtRow,
 } from "../extension/git-diff-viewer-logic.js"
 import type { DiffRow } from "../extension/types.js"
@@ -122,6 +123,21 @@ test("overview d/u keys scroll the diff viewer", () => {
       lastIndex: 10,
     }),
   ).toEqual({ type: "moveViewerPage", delta: -7 })
+})
+
+test("wrapped selected rows stay fully above the footer", () => {
+  const heights = [1, 1, 3]
+
+  expect(
+    scrollOffsetForVisibleRow(2, 0, 4, (index) => heights[index] ?? 1),
+  ).toBe(1)
+  expect(
+    scrollOffsetForVisibleRow(2, 0, 3, (index) => heights[index] ?? 1),
+  ).toBe(2)
+})
+
+test("scrolling up keeps the selected row visible", () => {
+  expect(scrollOffsetForVisibleRow(1, 5, 4, () => 1)).toBe(1)
 })
 
 test("diff viewer layout derives scrollable body heights from chrome", () => {

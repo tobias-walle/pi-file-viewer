@@ -64,7 +64,7 @@ export class FileViewerComponent implements Focusable {
   private buffer = new LineBuffer<string>()
   private visualSelection = new VisualLineSelection()
   private cachedWidth?: number
-  private cachedBodyHeight?: number
+  private cachedHeight?: number
   private cachedLines?: string[]
   private mode: Mode = "view"
   private commentPrompt = new TextPrompt({
@@ -127,41 +127,45 @@ export class FileViewerComponent implements Focusable {
   }
 
   render(width: number, height?: number): string[] {
+    const frameWidth = Math.max(0, width)
     const innerWidth = Math.max(10, width)
-    const bodyHeight = Math.max(5, (height ?? 30) - 7)
-    this.visibleHeight = bodyHeight
-    this.buffer.ensureVisible(bodyHeight)
+    const top = [
+      borderLine(this.theme, frameWidth),
+      this.renderHeader(innerWidth),
+      separatorLine(this.theme, innerWidth),
+    ]
+    const bottom = [
+      separatorLine(this.theme, innerWidth),
+      ...this.renderFooter(innerWidth),
+      borderLine(this.theme, frameWidth),
+    ]
+    const targetHeight =
+      height ?? top.length + this.visibleHeight + bottom.length
+    const bodyHeight = Math.max(0, targetHeight - top.length - bottom.length)
+    this.visibleHeight = Math.max(1, bodyHeight)
+    if (bodyHeight > 0) this.buffer.ensureVisible(bodyHeight)
 
     if (
       this.cachedLines &&
       this.cachedWidth === width &&
-      this.cachedBodyHeight === bodyHeight
+      this.cachedHeight === targetHeight
     ) {
       return this.cachedLines
     }
 
-    const lines: string[] = []
-    lines.push(this.renderHeader(innerWidth))
-    lines.push(separatorLine(this.theme, innerWidth))
-    lines.push(...this.renderBody(innerWidth, bodyHeight))
+    const body = this.renderBody(innerWidth, bodyHeight)
+    while (body.length < bodyHeight) body.push("")
 
-    while (lines.length < bodyHeight + 2) {
-      lines.push("")
-    }
-
-    lines.push(separatorLine(this.theme, innerWidth))
-    lines.push(...this.renderFooter(innerWidth))
-
-    const borderedLines = this.addHorizontalBorder(lines, width)
+    const framedLines = this.fitToWidth([...top, ...body, ...bottom], width)
     this.cachedWidth = width
-    this.cachedBodyHeight = bodyHeight
-    this.cachedLines = borderedLines
-    return borderedLines
+    this.cachedHeight = targetHeight
+    this.cachedLines = framedLines
+    return framedLines
   }
 
   invalidate(): void {
     this.cachedWidth = undefined
-    this.cachedBodyHeight = undefined
+    this.cachedHeight = undefined
     this.cachedLines = undefined
   }
 
@@ -243,6 +247,8 @@ export class FileViewerComponent implements Focusable {
   }
 
   private renderBody(width: number, height: number): string[] {
+    if (height === 0) return []
+
     const numberWidth = String(this.lineCount()).length
     const lines: string[] = []
 
@@ -539,17 +545,11 @@ export class FileViewerComponent implements Focusable {
     this.onRequestRender()
   }
 
-  private addHorizontalBorder(lines: string[], width: number): string[] {
+  private fitToWidth(lines: string[], width: number): string[] {
     const innerWidth = Math.max(0, width)
-    const result = [borderLine(this.theme, innerWidth)]
-
-    for (const line of lines) {
-      const text = truncateToWidth(line, innerWidth, "")
-      result.push(padToWidth(text, innerWidth))
-    }
-
-    result.push(borderLine(this.theme, innerWidth))
-    return result
+    return lines.map((line) =>
+      padToWidth(truncateToWidth(line, innerWidth, ""), innerWidth),
+    )
   }
 }
 

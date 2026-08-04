@@ -3,6 +3,28 @@ import type { DiffRow, GitChangedFile, GitDiffComment } from "./types.js"
 
 type SearchDelta = -1 | 1
 
+export function scrollOffsetForVisibleRow(
+  selectedIndex: number,
+  currentOffset: number,
+  viewportHeight: number,
+  rowHeight: (index: number) => number,
+): number {
+  const selected = Math.max(0, selectedIndex)
+  let offset = Math.min(Math.max(0, currentOffset), selected)
+  let occupiedHeight = 0
+
+  for (let index = offset; index <= selected; index++) {
+    occupiedHeight += Math.max(1, rowHeight(index))
+  }
+
+  while (occupiedHeight > viewportHeight && offset < selected) {
+    occupiedHeight -= Math.max(1, rowHeight(offset))
+    offset++
+  }
+
+  return offset
+}
+
 export type OverviewAction =
   | { type: "close" }
   | { type: "clearFilter" }
